@@ -1,0 +1,4 @@
+# dsh-prompt-compiler 安装清单：把插件行插入 profile 配置
+- insert:
+    - id: dsh-prompt-compiler
+      name: dsh-prompt-compiler

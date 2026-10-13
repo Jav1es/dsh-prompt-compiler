@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "check": "node --check lib/index.js && node --check lib/sdk.js && node --check lib/service.js && node --check lib/client.js",
+    "test": "node --test \"tests/**/*.test.js\"",
     "prepare": "node -e \"1\""
   },
   "main": "lib/index.js",

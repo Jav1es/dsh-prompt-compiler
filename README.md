@@ -21,6 +21,30 @@
 - [x] C 组服务化（定位核心，实调通过）
 - [x] D 组 UI 完整链路（composer「✨ 编译」按钮 + overlay 诊断/澄清/预览/回填，实调通过）
 - [x] E 组三阶段流程（analyze/compile 接 LLM，实调通过；elicit 保留规则）
+- [x] F 组插件设置页（**DSH 设置 → Prompt Compiler**，配置落宿主本机，实调通过）
+
+## 设置页（F 组）
+
+**入口**：DSH **设置 → Prompt Compiler**（官方插槽 `settings.section`，id `prompt-compiler`）。
+
+**持久化**：宿主本机 `~/.dsh/prompt-compiler/settings.json`（单一真相源，client / host 两侧读同一份）。
+原先外部模型配置只存在浏览器 localStorage，宿主读不到 —— 已迁移。
+
+五组配置，**全部真正生效**（不是摆设）：
+
+| 组 | 关键项 |
+|---|---|
+| 模型来源 | 外部模型开关、**优先/兜底二选一**、接口地址、API Key、模型名 |
+| 编译风格 | 目标模型（Claude/通用/本地）、强化模板 vs 温和模板 |
+| 输出格式 | 去掉标题行、丢弃思维链、折叠多余空行 |
+| 诊断与提示 | 模型徽章、诊断评分、技术细节、降级警告 |
+| 默认行为 | 编译后自动回填、显示自动假设 |
+
+**外部模型**：OpenAI 兼容 / 本地 ollama 均可。响应体形状自适应
+（`choices[0].message.content` / ollama `message.content` / ollama `response` / 顶层 `content` 都认），
+失败原因经 `diag.extFailReason` 暴露，不静默吞掉。
+
+**安全**：API Key 只落宿主本机，界面**不回显明文**（显示「已设置，留空不变」）。
 
 ## 实调回执（B6 验收）
 
@@ -120,12 +144,30 @@ dsh plugin --profile desktop add link:/绝对路径/dsh-prompt-compiler
 dsh-prompt-compiler/
 ├── lib/
 │   ├── index.js      # host 半（Node：工具 / 提示词 / 路由）
-│   ├── client.js     # client 半（浏览器：UI）
+│   ├── service.js    # promptCompiler 服务（analyze/elicit/compile + LLM 调用）
+│   ├── settings.js   # 设置持久化（~/.dsh/prompt-compiler/settings.json）
+│   ├── client.js     # client 半（浏览器：UI + 设置页）
 │   └── sdk.js        # 自包含 defineTool（抄 dsh-tiddlywiki，MIT）
+├── tests/            # node --test（service / settings / client 三套）
 ├── docs/             # 侦察产物
+├── .github/workflows/ci.yml
 ├── package.json
 └── cordis.patch.yml
 ```
+
+## 开发
+
+```bash
+npm ci         # 需 package-lock.json（CI 同款；lockfile 已入库）
+npm run check  # 语法检查
+npm test       # node --test，43 个用例
+```
+
+CI（`.github/workflows/ci.yml`）在 Node 22.x / 24.x 上跑 `npm ci → check → test`。
+
+**改 UI 注意**：stub 渲染测试（`tests/client.test.js`）只覆盖"结构 + 文案 + 条件渲染"，
+**测不出布局缺陷**（被遮住、点不到）。涉及浮层 / `position:sticky` / 滚动容器的改动，
+必须实机看一眼再发版。
 
 ## 纪律（来自项目 AGENTS.md）
 

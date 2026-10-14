@@ -1,0 +1,43 @@
+name: Release
+
+# 推 tag（v0.2.0 这种）即发布到 npm。
+# 前置：仓库 Secrets 里配好 NPM_TOKEN（npmjs 的 Automation / Granular publish token）。
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance 需要
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+      # 关键闸门：tag 必须与 package.json 的 version 一致。
+      # npm 同一个版本号只能发一次，发错了只能改号重发 —— 值得在发布前挡住。
+      - name: 校验 tag 与 package.json 版本一致
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          TAG=${GITHUB_REF_NAME#v}
+          echo "tag=$TAG  package.json=$PKG"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 package.json 版本 $PKG 不一致，拒绝发布"
+            exit 1
+          fi
+
+      - name: 发布到 npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

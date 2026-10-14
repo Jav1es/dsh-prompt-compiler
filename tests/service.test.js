@@ -174,3 +174,54 @@ test('回归④b：宿主只发 block-end（无 delta）时仍能取到正文', 
   assert.ok(out.compiled.includes('## Task'), '无 delta 的宿主应走 block-end 兜底拿到正文')
 })
 
+test('回归⑤：reasoning-only 模型（思维链块在前、正文块在后且只有 block-end）必须取到正文', async () => {
+  // 实测形态（nvidia/nemotron-3-super-120b-a12b，catalog 标 onlyReasoning:true）：
+  //   block-start(0, reasoning) → reasoning-delta(0)* → block-start(1, text) → block-end(1, text)
+  // 正文块只有 block-end、没有 text-delta。按 index 记账才能既不重复、又不丢失。
+  const answer = '{"missing":["缺少目标"],"ambiguities":[],"score":30,"reasoning":"真答案"}'
+  const host = {
+    listProviders: () => [{ id: 'nvidia' }],
+    listModels: async () => [{ id: 'nvidia/nemotron-3-super-120b-a12b' }],
+    stream() {
+      const chunks = [
+        { type: 'block-start', index: 0, blockType: 'reasoning' },
+        { type: 'reasoning-delta', index: 0, text: 'The user says 测试. Let me think about this.' },
+        { type: 'reasoning-delta', index: 0, text: ' I should reply with the JSON only.' },
+        { type: 'block-start', index: 1, blockType: 'text' },
+        { type: 'block-end', index: 1, block: { type: 'text', text: answer } },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ]
+      return (async function* () { for (const c of chunks) yield c })()
+    },
+  }
+  const svc = createPromptCompiler({ llm: host })
+  const a = await svc.analyze('写个爬虫')
+  assert.equal(a.score, 30, 'reasoning-only 模型的正文块应被取到（否则会静默降级到规则 score）')
+  assert.equal(a.reasoning, '真答案')
+  assert.ok(!JSON.stringify(a).includes('Let me think'), '思维链不得进入结果')
+})
+
+test('回归⑥：reasoning块有delta + 正文块也有delta ⇒ 只取正文，且不重复', async () => {
+  const body = '## Task 正文\n## Constraints - a\n## Output Format - b\n## Acceptance Criteria 1. c'
+  const host = {
+    listProviders: () => [{ id: 'x' }],
+    listModels: async () => [{ id: 'm' }],
+    stream() {
+      const chunks = [
+        { type: 'block-start', index: 0, blockType: 'reasoning' },
+        { type: 'reasoning-delta', index: 0, text: '思考中……' },
+        { type: 'block-end', index: 0, block: { type: 'reasoning', text: '思考中……' } },
+        { type: 'block-start', index: 1, blockType: 'text' },
+        { type: 'text-delta', index: 1, text: body },
+        { type: 'block-end', index: 1, block: { type: 'text', text: body } },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ]
+      return (async function* () { for (const c of chunks) yield c })()
+    },
+  }
+  const svc = createPromptCompiler({ llm: host })
+  const out = await svc.compile('写个爬虫')
+  assert.equal((out.compiled.match(/## Task/g) || []).length, 1, '正文重复了')
+  assert.ok(!out.compiled.includes('思考中'), '思维链泄漏')
+})
+

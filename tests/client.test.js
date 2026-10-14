@@ -202,6 +202,23 @@ test('client：外部模型关闭时隐藏子块但保留开关（条件渲染�
   assert.equal(tree.indexOf('接口地址'), -1, '关闭态不应显示接口地址输入')
 })
 
+test('client：设置页根容器须留出底部空隙，否则最后一行设置被 sticky 操作条永久遮住', () => {
+  // 滚动容器是宿主的面板而不是 .pcs 自己，而 .pcs-actions 用 position:sticky;bottom:0
+  // 浮在面板底部。若 .pcs 不留 padding-bottom，滚到底时最后一行设置的开关会压
+  // 在「恢复默认/保存」条底下点不到 —— 2026-10-14 在 DSH 设置面板里实测复现。
+  const root = /\.pcs\{([^}]*)\}/.exec(CLIENT_SRC)
+  assert.ok(root, '应能取到 .pcs 根容器规则')
+  const pad = /padding-bottom:\s*(\d+)px/.exec(root[1])
+  assert.ok(pad, '.pcs 必须声明 padding-bottom 以避开 sticky 操作条')
+  assert.ok(Number(pad[1]) >= 51,
+    '.pcs 的 padding-bottom（' + pad[1] + 'px）须不小于 sticky 操作条高度（约 51px）')
+
+  // 前提条件：操作条确实是贴底 sticky。这条不成立了就该重写本测试。
+  const actions = /\.pcs-actions\{([^}]*)\}/.exec(CLIENT_SRC)
+  assert.ok(actions && /position:sticky/.test(actions[1]) && /bottom:0/.test(actions[1]),
+    '.pcs-actions 应为 position:sticky;bottom:0（本测试的前提）')
+})
+
 test('client：settings.section 注册失败不得拖垮整个 client 半部', () => {
   // 模拟宿主版本没有该插槽：inject 抛错时其余插槽仍必须注册成功
   let loadedDef = null

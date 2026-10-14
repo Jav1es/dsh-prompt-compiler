@@ -10,6 +10,14 @@
     "prompt-engineering",
     "prompt-compiler"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jav1es/dsh-prompt-compiler.git"
+  },
+  "homepage": "https://github.com/Jav1es/dsh-prompt-compiler#readme",
+  "bugs": {
+    "url": "https://github.com/Jav1es/dsh-prompt-compiler/issues"
+  },
   "scripts": {
     "check": "node --check lib/index.js && node --check lib/sdk.js && node --check lib/service.js && node --check lib/settings.js && node --check lib/client.js",
     "test": "node --test \"tests/**/*.test.js\"",

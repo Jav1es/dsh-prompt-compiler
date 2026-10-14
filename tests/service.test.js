@@ -225,3 +225,53 @@ test('回归⑥：reasoning块有delta + 正文块也有delta ⇒ 只取正文�
   assert.ok(!out.compiled.includes('思考中'), '思维链泄漏')
 })
 
+test('回归⑦：provider 被限流(429)时不应换 purpose 重试，应直接换 provider', async () => {
+  const calls = []
+  const answer = '## Task ok\n## Constraints - a\n## Output Format - b\n## Acceptance Criteria 1. c'
+  const host = {
+    listProviders: () => [{ id: 'limited' }, { id: 'good' }],
+    listModels: async (p) => (p === 'limited' ? [{ id: 'm1' }] : [{ id: 'm2' }]),
+    stream(input) {
+      calls.push(input.provider)
+      if (input.provider === 'limited') {
+        const chunks = [
+          { type: 'finish', reason: { kind: 'error', failure: { message: '429 soft_rate', code: 'RATE_LIMIT' } } },
+        ]
+        return (async function* () { for (const c of chunks) yield c })()
+      }
+      const chunks = [
+        { type: 'block-start', index: 0, blockType: 'text' },
+        { type: 'text-delta', index: 0, text: answer },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ]
+      return (async function* () { for (const c of chunks) yield c })()
+    },
+  }
+  const svc = createPromptCompiler({ llm: host })
+  const out = await svc.compile('写个爬虫')
+  assert.equal(out.degraded, false)
+  assert.equal(calls.filter(p => p === 'limited').length, 1, '限流的 provider 不应被重试第二次')
+  assert.ok(calls.includes('good'), '应当换到可用的 provider')
+})
+
+test('回归⑧：无可选模型的 provider 应被跳过（空 listModels 不发调用）', async () => {
+  const calls = []
+  const host = {
+    listProviders: () => [{ id: 'empty' }, { id: 'ok' }],
+    listModels: async (p) => (p === 'empty' ? [] : [{ id: 'm' }]),
+    stream(input) {
+      calls.push(input.provider)
+      const chunks = [
+        { type: 'block-start', index: 0, blockType: 'text' },
+        { type: 'text-delta', index: 0, text: '## Task ok' },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ]
+      return (async function* () { for (const c of chunks) yield c })()
+    },
+  }
+  const svc = createPromptCompiler({ llm: host })
+  await svc.compile('写个爬虫')
+  assert.ok(!calls.includes('empty'), '空目录 provider 不应被调用')
+  assert.ok(calls.includes('ok'))
+})
+

@@ -89,7 +89,10 @@ dsh plugin --profile desktop add git+https://github.com/Jav1es/dsh-prompt-compil
 3. 看诊断评分 → 回答澄清问题（不想答就跳过，会标注为「自动推断」）
 4. 预览四段结果 → 「采用并回填」（**只回填，不会替你发送**）或「复制」
 
-![UI 完整链路](./docs/assets/d-ui-complete.png)
+![编译结果：模型徽章 + 四段结构 + 自动假设](./docs/assets/compile-result.png)
+
+顶部徽章会明确告诉你**这一次是哪个模型在干活**（宿主模型 / 外部模型 · 模型名），
+下方是编译结果，以及模型自行补上的「自动假设」供你核对 —— 不让你在黑暗里猜。
 
 ---
 
@@ -152,6 +155,11 @@ Agent 侧则有开箱即用的工具：给一句粗糙指令，模型可以自�
 |---|---|
 | ![prompt_compile](./docs/assets/b6-prompt_compile-demo.png) | ![probe](./docs/assets/c3-prompt_compiler-probe.png) |
 | `prompt_compile` 被模型识别、调用、返回四段模板 | `prompt_compiler_probe` 返回 analysis + elicitation + compile 三段可解析 JSON |
+
+| 完整链路（诊断 → 澄清 → 预览 → 回填） | LLM 接入回执 |
+|---|---|
+| ![UI 完整链路](./docs/assets/d-ui-complete.png) | ![LLM probe](./docs/assets/e-llm-probe.png) |
+| composer「✨ 编译」到「采用并回填」全流程 | `analyze` / `compile` 走 `ctx.llm.stream` 的实调回执 |
 
 ---
 

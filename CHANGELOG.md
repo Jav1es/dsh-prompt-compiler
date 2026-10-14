@@ -5,6 +5,23 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-10-14
+
+**纯文档版本 —— 代码零改动。** 之所以要单独发一个版本，是因为 npm 的**版本不可变**：
+0.2.0 发布时带的是旧 README，之后重写的文档只进了 GitHub，npm 页面上仍是旧版。
+本版把 README / CHANGELOG 同步到 npm。
+
+### 文档
+
+- 重写 README：卖点前置、npm/CI/license badges、真实 before-after 对照
+  （同一个 draft 诊断 30 分 → 编译后约束与验收标准显式化）、
+  可编程层的 `analyze` / `elicit` / `compile` 真实签名示例、
+  「诚实披露」一节（不宣称首创交互式澄清、`elicit` 走规则是设计选择、Claude Code 侧未实现）、
+  5 条关键踩坑。
+- 新增实机截图 `docs/assets/compile-result.png`（编译结果 + 模型徽章 + 自动假设）
+  与 `docs/assets/settings-page.png`（设置页）。
+- 新增本文件，并加入 `package.json` 的 `files`，确保随包发布。
+
 ## [0.2.0] - 2026-10-14
 
 这一版的主题是**从「能跑」到「能用」**：加了设置页、把 LLM 链路上一串静默降级的
@@ -100,5 +117,6 @@
   「采用并回填」（仅回填，不自动发送）。
 - **E 组 LLM 接入**：`analyze` / `compile` 接 `ctx.llm.stream`（标 `source:{kind:'plugin'}`）。
 
+[0.2.1]: https://github.com/Jav1es/dsh-prompt-compiler/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Jav1es/dsh-prompt-compiler/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Jav1es/dsh-prompt-compiler/releases/tag/v0.1.0

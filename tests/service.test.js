@@ -363,3 +363,167 @@ function hostReturning(text) {
   }
 }
 
+// —— 2026-10-14 用户反馈：「配了外部模型 API，编译时还是本地」 ——
+// 真因：compile 里外部模型**只在宿主失败后**才被调用（纯兜底），
+// UI 文案却承诺「优先」。今新增 extPriority 开关，两种模式都要可验证。
+
+const HOST_MD = '## Task 宿主模型产出\n## Constraints - a\n## Output Format - b\n## Acceptance Criteria 1. c'
+const EXT_MD = '## Task 外部模型产出\n## Constraints - x\n## Output Format - y\n## Acceptance Criteria 1. z'
+
+/** 起一个本地假 HTTP 端点，冒充 OpenAI 兼容服务，返回固定文本。 */
+function startFakeEndpoint(text) {
+  const http = require('node:http')
+  const hits = { n: 0 }
+  const server = http.createServer((req, res) => {
+    hits.n++
+    let body = ''
+    req.on('data', (c) => { body += c })
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json')
+      res.end(JSON.stringify({ choices: [{ message: { content: text } }] }))
+    })
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address().port
+      resolve({
+        url: 'http://127.0.0.1:' + port + '/v1/chat/completions',
+        hits,
+        close: () => new Promise((r) => server.close(r)),
+      })
+    })
+  })
+}
+
+const EXT_CFG = (url) => ({ enabled: true, baseUrl: url, apiKey: '', model: 'fake-ext-model' })
+
+test('回归⑬（核心）：extPriority=true 时外部模型必须被真正调用（宿主可用也不抢先）', async () => {
+  const ep = await startFakeEndpoint(EXT_MD)
+  try {
+    const svc = createPromptCompiler({ llm: hostReturning(HOST_MD) })
+    const out = await svc.compile('帮我写个爬虫', {
+      external: EXT_CFG(ep.url),
+      extPriority: true,
+    })
+    assert.ok(out.compiled.includes('外部模型产出'), '外部模型优先时应使用外部产出，实得：' + out.compiled.slice(0, 80))
+    assert.equal(out.diag.source, 'external', 'diag.source 应为 external')
+    assert.equal(out.diag.modelUsed, 'fake-ext-model')
+    assert.equal(ep.hits.n, 1, '外部端点应被调用 1 次')
+  } finally { await ep.close() }
+})
+
+test('回归⑭：extPriority 缺省/false 时保持宿主优先（外部不抢先）', async () => {
+  const ep = await startFakeEndpoint(EXT_MD)
+  try {
+    const svc = createPromptCompiler({ llm: hostReturning(HOST_MD) })
+    const out = await svc.compile('帮我写个爬虫', { external: EXT_CFG(ep.url) })
+    assert.ok(out.compiled.includes('宿主模型产出'), '默认应宿主优先，实得：' + out.compiled.slice(0, 80))
+    assert.equal(out.diag.source, 'host')
+    assert.equal(ep.hits.n, 0, '宿主成功时不应调用外部端点')
+  } finally { await ep.close() }
+})
+
+test('回归⑮：extPriority=true 但外部失败 → 自动回落宿主（不降级规则）', async () => {
+  // 指向一个必然连不上的端口
+  const svc = createPromptCompiler({ llm: hostReturning(HOST_MD) })
+  const out = await svc.compile('帮我写个爬虫', {
+    external: { enabled: true, baseUrl: 'http://127.0.0.1:1/v1/chat/completions', apiKey: '', model: 'nope' },
+    extPriority: true,
+  })
+  assert.equal(out.degraded, false, '外部失败后应回落宿主而不是降级规则')
+  assert.ok(out.compiled.includes('宿主模型产出'), '应回落到宿主产出')
+  assert.equal(out.diag.source, 'host')
+})
+
+test('回归⑯：宿主优先模式下宿主失败 → 外部兜底生效', async () => {
+  const ep = await startFakeEndpoint(EXT_MD)
+  try {
+    const deadHost = {
+      listProviders: () => [{ id: 'p' }],
+      listModels: async () => [{ id: 'm' }],
+      stream() {
+        const chunks = [{ type: 'finish', reason: { kind: 'error', failure: { message: 'boom', code: 'X' } } }]
+        return (async function* () { for (const c of chunks) yield c })()
+      },
+    }
+    const svc = createPromptCompiler({ llm: deadHost })
+    const out = await svc.compile('帮我写个爬虫', { external: EXT_CFG(ep.url) })
+    assert.ok(out.compiled.includes('外部模型产出'), '宿主失败时应由外部兜底')
+    assert.equal(out.diag.source, 'external')
+  } finally { await ep.close() }
+})
+
+test('回归⑰：本机 OpenAI 兼容端点（非 ollama 响应形状）必须能解析', async () => {
+  // 真因：旧实现用 127.0.0.1 判定"这是 ollama"，只按 data.message.content 解析；
+  // 而 LM Studio / vLLM / LocalAI 等在 localhost 上返回的是 OpenAI 形状
+  // ⇒ 解析出空串 ⇒ 被当成失败 ⇒ 静默回落宿主（用户报的"配了外部还是本地"）。
+  const ep = await startOpenAIEndpoint(EXT_MD)
+  try {
+    const svc = createPromptCompiler({ llm: hostReturning(HOST_MD) })
+    const out = await svc.compile('帮我写个爬虫', { external: EXT_CFG(ep.url), extPriority: true })
+    assert.ok(out.compiled.includes('外部模型产出'),
+      'localhost 上的 OpenAI 形状响应应被正确解析，实得：' + out.compiled.slice(0, 80))
+    assert.equal(out.diag.source, 'external')
+  } finally { await ep.close() }
+})
+
+test('回归⑱：外部端点报错时，必须把原因暴露给 UI（不能静默回落）', async () => {
+  const ep = await startErrorEndpoint(401, '{"error":{"message":"Invalid API key provided"}}')
+  try {
+    const svc = createPromptCompiler({ llm: hostReturning(HOST_MD) })
+    const out = await svc.compile('帮我写个爬虫', { external: EXT_CFG(ep.url), extPriority: true })
+    assert.equal(out.diag.source, 'host', '应回落到宿主')
+    assert.ok(out.diag.extFailReason, 'diag.extFailReason 必须记录外部失败原因')
+    assert.match(out.diag.extFailReason, /401/, '原因里应含 HTTP 状态码，便于用户自查')
+    assert.match(out.diag.extFailReason, /Invalid API key/, '原因里应带端点返回的说明')
+  } finally { await ep.close() }
+})
+
+test('回归⑲：ollama 形状（data.message.content）同样要能解析', async () => {
+  const ep = await startOllamaEndpoint('## Task ollama 产出\n## Constraints - q')
+  try {
+    const svc = createPromptCompiler({ llm: hostReturning(HOST_MD) })
+    const out = await svc.compile('帮我写个爬虫', { external: EXT_CFG(ep.url), extPriority: true })
+    assert.ok(out.compiled.includes('ollama 产出'), 'ollama 形状应被解析')
+    assert.equal(out.diag.source, 'external')
+  } finally { await ep.close() }
+})
+
+/** 起一个返回 OpenAI 兼容形状的假端点。 */
+function startOpenAIEndpoint(text) {
+  return startHttp((req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ choices: [{ message: { content: text } }] }))
+  })
+}
+/** 起一个返回 ollama /api/chat 形状的假端点。 */
+function startOllamaEndpoint(text) {
+  return startHttp((req, res) => {
+    res.setHeader('content-type', 'application/json')
+    res.end(JSON.stringify({ message: { content: text } }))
+  })
+}
+/** 起一个固定返回错误的假端点。 */
+function startErrorEndpoint(status, body) {
+  return startHttp((req, res) => {
+    res.statusCode = status
+    res.setHeader('content-type', 'application/json')
+    res.end(body || '')
+  })
+}
+/** 通用假 HTTP 端点（随机端口，返回 url 与关闭句柄）。 */
+function startHttp(handler) {
+  const http = require('node:http')
+  const server = http.createServer(handler)
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      resolve({
+        url: 'http://127.0.0.1:' + server.address().port + '/v1/chat/completions',
+        close: () => new Promise((r) => server.close(r)),
+      })
+    })
+  })
+}
+
+
+

@@ -131,3 +131,46 @@ test('回归③：finish(stop) 不得被误判成拒绝', async () => {
   assert.ok(!detail.some(d => /reject=finish: \{"kind":"stop"\}/.test(d)), 'finish(stop) 被误判为拒绝')
 })
 
+test('回归④：block-end 不得把正文再算一遍（否则输出整体重复两遍）', async () => {
+  // 真实宿主顺序：block-start → text-delta*（逐块累加）→ block-end（携带该块完整文本）
+  const body = '## Task 抓取新闻\n## Constraints - 仅 HTTP GET\n## Output Format - 每行 JSON\n## Acceptance Criteria 1. 非空 title'
+  const host = {
+    listProviders: () => [{ id: 'workbuddy' }],
+    listModels: async () => [{ id: 'hy3-x' }],
+    stream() {
+      const chunks = [
+        { type: 'block-start', index: 0, blockType: 'text' },
+        { type: 'text-delta', index: 0, text: body },
+        { type: 'block-end', index: 0, block: { type: 'text', text: body } },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ]
+      return (async function* () { for (const c of chunks) yield c })()
+    },
+  }
+  const svc = createPromptCompiler({ llm: host })
+  const out = await svc.compile('帮我写个爬虫')
+  const n = (out.compiled.match(/## Task/g) || []).length
+  assert.equal(n, 1, `## Task 应只出现 1 次，实得 ${n}（输出重复了）`)
+  assert.ok(!out.compiled.includes(body + body), '正文被 block-end 重复累加')
+})
+
+test('回归④b：宿主只发 block-end（无 delta）时仍能取到正文', async () => {
+  const body = '## Task 只有块结束事件\n## Constraints - x\n## Output Format - y\n## Acceptance Criteria 1. z'
+  const host = {
+    listProviders: () => [{ id: 'workbuddy' }],
+    listModels: async () => [{ id: 'hy3-x' }],
+    stream() {
+      const chunks = [
+        { type: 'block-start', index: 0, blockType: 'text' },
+        { type: 'block-end', index: 0, block: { type: 'text', text: body } },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ]
+      return (async function* () { for (const c of chunks) yield c })()
+    },
+  }
+  const svc = createPromptCompiler({ llm: host })
+  const out = await svc.compile('帮我写个爬虫')
+  assert.equal(out.degraded, false, '不应降级')
+  assert.ok(out.compiled.includes('## Task'), '无 delta 的宿主应走 block-end 兜底拿到正文')
+})
+

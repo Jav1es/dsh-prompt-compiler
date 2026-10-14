@@ -275,3 +275,91 @@ test('回归⑧：无可选模型的 provider 应被跳过（空 listModels 不�
   assert.ok(calls.includes('ok'))
 })
 
+// —— 2026-10-14 用户 UI 实测反馈（截图）暴露的问题，回归测试 ——
+
+const goodMarkdown = [
+  '## Task',
+  '抓取新闻标题与链接。',
+  '',
+  '## Constraints',
+  '- 仅使用 HTTP GET。',
+  '- 遵守 robots.txt 规则。',
+  '',
+  '## Output Format',
+  '每行一条 JSON。',
+  '',
+  '## Acceptance Criteria',
+  '1. 每条含非空 title。',
+  '2. 无重复。',
+].join('\n')
+
+test('回归⑨（问题5/问题2）：LLM 输出的 markdown 结构必须原样保留，不得被压平', async () => {
+  const svc = createPromptCompiler({ llm: hostReturning(goodMarkdown) })
+  const out = await svc.compile('写个爬虫')
+  // 核心不变量：四个标题各占一行
+  for (const h of ['## Task', '## Constraints', '## Output Format', '## Acceptance Criteria']) {
+    assert.ok(out.compiled.includes(h + '\n'), `标题 "${h}" 后应换行（未被粘上正文）`)
+  }
+  // 标题不得与正文挤在同一行（注意：\s 含 \n，必须用 [^\S\n] 只匹配同行空白）
+  assert.ok(!/## Task[^\S\n]+\S/.test(out.compiled), '## Task 被粘上了正文')
+  // robots.txt 不得被拆成两行
+  assert.ok(out.compiled.includes('robots.txt'), 'robots.txt 被句点误切断了')
+  assert.ok(!/robots\.\n/.test(out.compiled), 'robots. 后面不应换行')
+  // 列表序号不得孤立成行
+  assert.ok(!/## Acceptance Criteria\s+1\.\s*\n/.test(out.compiled), '标题后挂了孤立序号')
+})
+
+test('回归⑩（问题5）：模型把标题与正文写在同一行时应自动拆开', async () => {
+  const messy = '## Task 抓取新闻。\n## Constraints - 仅 GET。\n## Output Format 每行 JSON。\n## Acceptance Criteria 1. x'
+  const svc = createPromptCompiler({ llm: hostReturning(messy) })
+  const out = await svc.compile('写个爬虫')
+  assert.ok(out.compiled.includes('## Task\n'), '## Task 应独占一行')
+  assert.ok(out.compiled.includes('抓取新闻。'), '正文应保留')
+  assert.ok(out.compiled.includes('## Acceptance Criteria\n1. x'), '序号应从标题拆到下一行')
+})
+
+test('回归⑪（问题3）：diag 必须暴露实际使用的模型，供 UI 显示徽章', async () => {
+  const host = {
+    listProviders: () => [{ id: 'workbuddy' }],
+    listModels: async () => [{ id: 'hy3-x' }],
+    stream() {
+      const chunks = [
+        { type: 'block-start', index: 0, blockType: 'text' },
+        { type: 'text-delta', index: 0, text: goodMarkdown },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ]
+      return (async function* () { for (const c of chunks) yield c })()
+    },
+  }
+  const svc = createPromptCompiler({ llm: host })
+  const out = await svc.compile('写个爬虫')
+  assert.equal(out.diag.providerUsed, 'workbuddy')
+  assert.equal(out.diag.modelUsed, 'hy3-x', 'diag.modelUsed 应记录实际模型（徽章数据源）')
+  assert.equal(out.diag.usedModelLabel, 'workbuddy/hy3-x')
+})
+
+test('回归⑫（问题2）：规则降级路径仍应输出四段结构（tidyDraft 只用于 draft）', async () => {
+  const svc = createPromptCompiler(null) // 无 LLM → 规则降级
+  const out = await svc.compile('帮我写个爬虫')
+  assert.equal(out.degraded, true)
+  assert.ok(out.compiled.includes('## Task'), '规则路径应有四段结构')
+  assert.ok(out.compiled.includes('## Constraints'))
+  assert.ok(out.compiled.includes('## Output Format'))
+})
+
+/** 造一个按 StreamChunk 契约吐单段文本的假宿主。 */
+function hostReturning(text) {
+  return {
+    listProviders: () => [{ id: 'workbuddy' }],
+    listModels: async () => [{ id: 'hy3-x' }],
+    stream() {
+      const chunks = [
+        { type: 'block-start', index: 0, blockType: 'text' },
+        { type: 'text-delta', index: 0, text },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ]
+      return (async function* () { for (const c of chunks) yield c })()
+    },
+  }
+}
+

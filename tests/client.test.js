@@ -89,7 +89,7 @@ function makeReactStub() {
 }
 
 /** 加载 client.js 并执行 apply()，返回 { mod, registered }。 */
-function loadClient(settingsPayload) {
+function loadClient(settingsPayload, opts) {
   let loadedDef = null
   const sandbox = {
     window: {
@@ -104,12 +104,14 @@ function loadClient(settingsPayload) {
     },
     document: { createElement: () => ({ set textContent(_) {}, remove() {} }), head: { appendChild() {} } },
     console, setTimeout, clearTimeout,
+    navigator: { clipboard: { writeText() { return Promise.resolve() } } },
   }
   sandbox.globalThis = sandbox
-  sandbox.fetch = () => Promise.resolve({
+  // 默认 fetch 只回设置；模板类测试用 opts.fetch 按路径分流
+  sandbox.fetch = (opts && opts.fetch) || (() => Promise.resolve({
     ok: true,
     json: () => Promise.resolve({ ok: true, settings: settingsPayload }),
-  })
+  }))
   vm.createContext(sandbox)
   vm.runInContext(CLIENT_SRC, sandbox)
 
@@ -135,6 +137,34 @@ function loadClient(settingsPayload) {
   }
   mod.apply(fakeCtx)
   return { mod, registered, stub }
+}
+
+// —— 遍历/查找辅助（React element 就是普通对象，可直接走 props/children） ——
+
+/** 深度优先收集满足 pred 的元素。 */
+function findAll(node, pred) {
+  const out = []
+  ;(function walk(n) {
+    if (!n || typeof n !== 'object') return
+    if (Array.isArray(n)) { n.forEach(walk); return }
+    if (pred(n)) out.push(n)
+    if (n.children) walk(n.children)
+  })(node)
+  return out
+}
+
+/** 收集所有可点击元素（有 onClick 的）。 */
+function clickables(tree) {
+  return findAll(tree, (n) => n && n.props && typeof n.props.onClick === 'function')
+}
+
+/** 在 tree 里按可见文案找一个可点击元素（取文案**包含** label 的最内层）。 */
+function findByLabel(tree, label, stub) {
+  const hits = clickables(tree).filter((n) => stub.render(n.children, 0).indexOf(label) !== -1)
+  if (!hits.length) return null
+  // 取渲染文本最短的 —— 即最内层那个，避免匹配到包了一层的外层元素
+  return hits.sort((a, b) =>
+    stub.render(a.children, 0).length - stub.render(b.children, 0).length)[0]
 }
 
 function sampleSettings(enabled) {
@@ -255,4 +285,198 @@ test('client：settings.section 注册失败不得拖垮整个 client 半部', (
   assert.doesNotThrow(() => mod.apply(fakeCtx), 'settings.section 失败不应让 apply 抛错')
   assert.ok(registered['conversation.input.right'], '其余插槽仍应注册成功')
   assert.ok(registered['shell.overlay'], '其余插槽仍应注册成功')
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// 模板 UI（评审类模板）
+//
+// 注意：stub 的 render() 返回**字符串**，所以这里不能靠它遍历树 ——
+// 改为直接调用组件函数拿到 React element 树，再用 plainText() 取纯文本。
+// 这样能在不起浏览器的情况下走完：点「模板」→ 列模板 → 选模板 →
+// 按 schema 生成表单 → 渲染 → 采用并回填 的完整链路。
+// ══════════════════════════════════════════════════════════════════════
+
+/** 取元素树里的纯文本（不展开函数组件，避免误触发 hooks）。 */
+function plainText(node) {
+  if (node === null || node === undefined || node === false) return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(plainText).join('')
+  if (typeof node.type === 'string') return plainText(node.children)
+  return ''
+}
+
+const TPL_LIST = {
+  templates: [
+    {
+      id: 'portfolio-review', version: '1.0.0', category: 'review',
+      title: '作品集 / 个人主页评审', description: '从四个视角评审个人主页',
+      variables: {
+        properties: {
+          siteUrl: { type: 'string', required: true, description: '主页地址' },
+          targetRoles: { type: 'string[]', required: true, description: '目标岗位' },
+          background: {
+            type: 'object', description: '个人背景',
+            properties: {
+              years: { type: 'string', description: '经验年限' },
+              metrics: { type: 'string[]', description: '量化成果' },
+            },
+          },
+        },
+      },
+    },
+    {
+      id: 'code-review', version: '1.0.0', category: 'review',
+      title: '代码审查', description: '按 6 个维度审查代码',
+      variables: { properties: { code: { type: 'string', required: true, description: '代码或 diff' } } },
+    },
+  ],
+}
+
+/** 按路径分流的假 fetch，并记录调用。 */
+function tplFetch(renderReply) {
+  const calls = []
+  const fetchImpl = (url, init) => {
+    const body = init && init.body ? JSON.parse(init.body) : {}
+    calls.push({ url, body })
+    if (/\/templates$/.test(url)) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(TPL_LIST) })
+    }
+    if (/\/render$/.test(url)) {
+      if (renderReply && renderReply.error) {
+        return Promise.resolve({ ok: false, status: 400, json: () => Promise.resolve({ error: renderReply.error }) })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, id: body.template, version: '1.0.0', text: renderReply.text }),
+      })
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, settings: sampleSettings(true) }) })
+  }
+  return { calls, fetch: fetchImpl }
+}
+
+/** 在元素树里找 button。 */
+function buttonsOf(el) {
+  return findAll(el, (n) => n && n.type === 'button' && n.props)
+}
+
+/**
+ * 渲染 overlay 根并**展开到实际的卡片元素**。
+ * OverlayCard 返回的是 `createElement(TemplateCard)` —— 一个 type 为函数的元素，
+ * plainText 不展开函数组件，所以必须手动调一次，否则拿到空文本。
+ * 展开前 resetHooks，让卡片组件的 hooks 从 0 开始。
+ */
+function openCard(stub, Overlay) {
+  stub.resetHooks()
+  // 注意：这里直接调 Overlay —— 别再写成 openCard，否则自递归
+  let el = Overlay(Object.assign({}, {}))
+  if (el && typeof el.type === 'function') {
+    stub.resetHooks()
+    el = el.type(Object.assign({}, el.props))
+  }
+  return el
+}
+
+test('client：composer 工具栏提供「模板」入口，且与「编译」并列', () => {
+  const { registered, stub } = loadClient(sampleSettings(true))
+  const Comp = registered['conversation.input.right'].comp
+  stub.resetHooks()
+  const el = Comp({ useInput: () => 'x', inputActions: { setDraft() {} } })
+  const text = plainText(el)
+  assert.ok(text.indexOf('模板') !== -1, '应有「模板」入口')
+  assert.ok(text.indexOf('编译') !== -1, '「编译」入口应保留（两条并列路径）')
+  assert.ok(buttonsOf(el).some((b) => plainText(b).indexOf('模板') !== -1), '「模板」应可点击')
+})
+
+test('client：模板卡完整链路——列模板 → 选模板 → 按 schema 生成表单 → 渲染 → 可回填', async () => {
+  const fx = tplFetch({ text: '# 角色\n你是评审员\n# 约束\n- x\n' })
+  const { registered, stub } = loadClient(sampleSettings(true), { fetch: fx.fetch })
+  const Comp = registered['conversation.input.right'].comp
+  const Overlay = registered['shell.overlay'].comp
+  let applied = null
+
+  // ① 点「模板」打开模板卡
+  stub.resetHooks()
+  const compEl = Comp({ useInput: () => 'x', inputActions: { setDraft(t) { applied = t } } })
+  buttonsOf(compEl).find((b) => plainText(b).indexOf('模板') !== -1).props.onClick()
+
+  // ② 首帧应是加载态，effect 跑完后列出模板
+  stub.resetHooks()
+  assert.ok(plainText(openCard(stub, Overlay)).indexOf('正在读取模板列表') !== -1, '首帧应为加载态')
+  await stub.runEffects()
+
+  stub.resetHooks()
+  let ov = openCard(stub, Overlay)
+  let text = plainText(ov)
+  assert.ok(text.indexOf('选择模板') !== -1, '应进入选模板步骤')
+  assert.ok(text.indexOf('作品集 / 个人主页评审') !== -1, '应列出模板标题')
+  assert.ok(text.indexOf('代码审查') !== -1, '应列出全部模板')
+  assert.deepEqual(stub.problems, [], '渲染不得有结构性错误')
+
+  // ③ 选「作品集 / 个人主页评审」→ 表单按 schema 生成
+  buttonsOf(ov).find((b) => plainText(b).indexOf('作品集 / 个人主页评审') !== -1).props.onClick()
+  stub.resetHooks()
+  ov = openCard(stub, Overlay)
+  text = plainText(ov)
+  for (const label of ['siteUrl', 'targetRoles', 'background', 'years', 'metrics']) {
+    assert.ok(text.indexOf(label) !== -1, `表单应含字段 ${label}`)
+  }
+  assert.ok(text.indexOf('*') !== -1, '必填项应有标记')
+  assert.ok(text.indexOf('主页地址') !== -1, '应显示字段说明')
+
+  // ④ 填一个必填项后点「渲染」
+  const inputs = findAll(ov, (n) => n.type === 'input' && n.props && n.props.onChange)
+  assert.ok(inputs.length >= 1, '应生成输入控件')
+  inputs[0].props.onChange({ target: { value: 'https://x.dev/' } })
+
+  stub.resetHooks()
+  ov = openCard(stub, Overlay)
+  buttonsOf(ov).find((b) => plainText(b) === '渲染').props.onClick()
+  await new Promise((r) => setTimeout(r, 20))
+
+  // ⑤ 展示结果，且请求体里带上模板 id 与已填值
+  stub.resetHooks()
+  ov = openCard(stub, Overlay)
+  text = plainText(ov)
+  assert.ok(text.indexOf('渲染结果') !== -1, '应进入结果步骤')
+  assert.ok(text.indexOf('本次未调用模型') !== -1, '结果里应标明未消耗模型调用')
+  assert.ok(text.indexOf('# 角色') !== -1, '应显示渲染出的正文')
+
+  const renderCall = fx.calls.filter((c) => /\/render$/.test(c.url)).pop()
+  assert.ok(renderCall, '应调用了 /render')
+  assert.equal(renderCall.body.template, 'portfolio-review')
+  assert.equal(renderCall.body.variables.siteUrl, 'https://x.dev/')
+  assert.equal(renderCall.body.variables.targetRoles, undefined, '空数组不应上传（交给 host 用 defaults）')
+
+  // ⑥ 采用并回填只写输入框，不发送
+  buttonsOf(ov).find((b) => plainText(b) === '采用并回填').props.onClick()
+  assert.equal(applied, '# 角色\n你是评审员\n# 约束\n- x\n', '应把渲染结果写回输入框')
+})
+
+test('client：渲染失败（400）时显示可读错误，不白屏', async () => {
+  const fx = tplFetch({ error: '缺少必填变量：siteUrl（主页地址）' })
+  const { registered, stub } = loadClient(sampleSettings(true), { fetch: fx.fetch })
+  const Comp = registered['conversation.input.right'].comp
+  const Overlay = registered['shell.overlay'].comp
+
+  stub.resetHooks()
+  const compEl = Comp({ useInput: () => 'x', inputActions: { setDraft() {} } })
+  buttonsOf(compEl).find((b) => plainText(b).indexOf('模板') !== -1).props.onClick()
+  stub.resetHooks(); openCard(stub, Overlay)
+  await stub.runEffects()
+
+  stub.resetHooks()
+  let ov = openCard(stub, Overlay)
+  buttonsOf(ov).find((b) => plainText(b).indexOf('代码审查') !== -1).props.onClick()
+  stub.resetHooks()
+  ov = openCard(stub, Overlay)
+  buttonsOf(ov).find((b) => plainText(b) === '渲染').props.onClick()
+  await new Promise((r) => setTimeout(r, 20))
+
+  stub.resetHooks()
+  ov = openCard(stub, Overlay)
+  const text = plainText(ov)
+  assert.ok(text.indexOf('缺少必填变量') !== -1, '应把 host 的可读错误显示出来')
+  assert.ok(text.indexOf('渲染') !== -1, '失败后应留在表单，允许改了再试')
+  assert.deepEqual(stub.problems, [], '渲染不得有结构性错误')
 })

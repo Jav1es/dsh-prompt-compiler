@@ -5,7 +5,7 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.3.0] - 2026-10-15
 
 ### 新增
 
@@ -17,12 +17,25 @@
 - **零依赖模板引擎**（`lib/templates.js`）：`{{var}}` / 点路径 / `{{#each}}` / `{{#if}}` / `\{{` 转义；
   `defaults ← vars` 深合并；必填与类型校验；模板注册时**静态审计**引用的变量是否有出处。
   之所以手写而不是引入 zod + handlebars：本插件的卖点之一是零运行时依赖（`dependencies` 为空）。
-- **内置模板 `portfolio-review`**（category: `review`）：作品集 / 个人主页评审。
-  四个视角、10 个评估维度、按招聘方真实浏览节奏（5 秒 / 30 秒 / 2 分钟）分析，
-  输出 9 段带 P0–P2 优先级的整改清单，含"无法访问网址时严禁编造"的兜底。
+- **三个内置模板**（category 均为 `review`）：
+  - `portfolio-review` —— 作品集 / 个人主页评审。四个视角、10 个评估维度、
+    按招聘方真实浏览节奏（5 秒 / 30 秒 / 2 分钟）分析，输出 9 段带 P0–P2 优先级的整改清单，
+    含"无法访问网址时严禁编造"的兜底。
+  - `code-review` —— 代码审查。6 维度（正确性 / 边界与异常 / 安全 / 性能 / 可维护性 / 测试）、
+    6 段输出、阻断 / 严重 / 建议三级，含"不要把风格偏好伪装成缺陷"的约束。
+  - `prompt-review` —— Prompt 评审。0–100 评分 + 缺失要素 / 歧义点 / 改写对照 / 可复制补强段。
+  - ⚠️ **命名诚实**：本项目**不**把这两个模板叫 CLARITY / PRECISE。查证（`gh api` 列该仓库
+    `frameworks/`）后确认 `dreamor/prompt-optimizer-skill` 里**没有**这两个框架（它有
+    CRISPE / RACEF / RISEN / RTF / TAG 等 60+ 个），公开来源也查不到——真实存在的是
+    **CLEAR**。凭空宣称出处是诚信问题，故改为自研并如实标注。
 - **工具 `prompt_template`**：不传 `template` 先列出可用模板，传了就渲染；
   渲染失败回结构化错误 JSON，让模型能自我修正而不是被异常打断。
 - **HTTP 路由** `/api/templates`、`/api/render`。
+- **client 半的模板 UI**：composer 工具栏新增「📋 模板」入口（与「✨ 编译」**并列**）。
+  选模板 → 填变量 → 渲染 → 「采用并回填」（仅回填，不发送）。
+  变量表单由模板的 `variables` schema **自动生成**（string / string[] / object 下钻），
+  所以以后新增模板完全不用改 `client.js`。
+  空值不上传、交给模板 `defaults` 补齐；结果里标明「本次未调用模型」。
 
 ### 说明
 
@@ -34,9 +47,17 @@
 - 用户给的原始设计里，Handlebars 模板引用了 `{{role}}` / `{{task}}` / `{{#dimensions}}`，
   但这三个变量在变量表里都没定义。已全部补进 `defaults`（10 个维度做成默认值，
   正好兑现"加维度只改配置、不改模板"）；引擎侧也加了静态审计 + 输出位报错双重兜底。
-- 测试从 43 增至 **84**，新增 `tests/{templates,builtin-templates,index}.test.js`。
+- 测试从 43 增至 **94**，新增 `tests/{templates,builtin-templates,index}.test.js`。
   其中 `tests/index.test.js` 是 host 半**首次**有测试覆盖（用 stub ctx 真实执行 `apply`，
-  覆盖工具注册、路由 200/400/404、1MB 限长、非法 JSON）。
+  覆盖工具注册、路由 200/400/404、1MB 限长、非法 JSON）；
+  `tests/client.test.js` 新增模板 UI 的三条端到端结构用例，
+  其中一条专门钉住「**用户代码里的 `{{...}}` 不得被二次解析**」——
+  否则用户提交的 Vue / Jinja 模板代码会被当成模板变量吃掉或误报未定义。
+
+### 已验证
+
+- 重启宿主后实测：`/api/templates` → 200、`/api/render` 正常输入 → 200、缺必填 → **400 + 可读原因**；
+  `prompt_template` 工具可直接调用。（负对照：改动前这两个路由是 404。）
 
 ## [0.2.1] - 2026-10-14
 
@@ -150,7 +171,7 @@
   「采用并回填」（仅回填，不自动发送）。
 - **E 组 LLM 接入**：`analyze` / `compile` 接 `ctx.llm.stream`（标 `source:{kind:'plugin'}`）。
 
-[Unreleased]: https://github.com/Jav1es/dsh-prompt-compiler/compare/v0.2.1...HEAD
+[0.3.0]: https://github.com/Jav1es/dsh-prompt-compiler/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Jav1es/dsh-prompt-compiler/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Jav1es/dsh-prompt-compiler/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Jav1es/dsh-prompt-compiler/releases/tag/v0.1.0

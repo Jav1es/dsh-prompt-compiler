@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-compiler",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Prompt Compiler 插件：把粗糙 draft 编译成结构化 prompt（DSH 插件 host 半，B 组最小可运行版）。",
   "keywords": [
     "deepseek-harness",

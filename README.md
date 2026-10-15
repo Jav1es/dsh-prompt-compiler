@@ -155,6 +155,10 @@ ctx.promptCompiler.listTemplates()
 
 Agent 侧对应工具是 `prompt_template`（**不传 `template` 就会先列出可用模板**）。
 
+**也可以在 UI 里用**：composer 工具栏的「📋 模板」按钮 → 选模板 → 填变量（表单按模板的
+`variables` schema 自动生成）→ 渲染 → 「采用并回填」（**仅回填，不发送**）。
+它与「✨ 编译」是**并列的两个入口**，不是编译的一个选项。
+
 **`render` 与 `compile` 的分工** —— 刻意做成两个并列能力，而不是重载 `compile`：
 
 | | `compile(draft, options)` | `render(templateId, vars)` |
@@ -169,6 +173,13 @@ Agent 侧对应工具是 `prompt_template`（**不传 `template` 就会先列出
 | id | category | 说明 |
 |---|---|---|
 | `portfolio-review` | review | 作品集 / 个人主页评审。四个视角（简历顾问 / UIUX / 技术招聘 / HR）、**10 个评估维度**、按招聘方真实浏览节奏（5 秒 / 30 秒 / 2 分钟）分析，输出 **9 段带 P0–P2 优先级**的整改清单；含"无法访问网址时不许编造"的兜底 |
+| `code-review` | review | 代码审查。6 维度（正确性 / 边界与异常 / 安全 / 性能 / 可维护性 / 测试）、6 段输出、阻断 / 严重 / 建议三级；含"不要把风格偏好伪装成缺陷"的约束 |
+| `prompt-review` | review | Prompt 评审。0–100 评分 + 缺失要素 / 歧义点 / 改写前后对照 / 可直接复制的补强段 |
+
+> **命名诚实**：这三个模板都是**自研**的，不挂任何外部框架名。曾有人把其中两个设想为
+> "CLARITY / PRECISE" 并声称出自某开源仓库 —— 实际查证后该仓库**没有**这两个框架
+> （它有 CRISPE / RACEF / RISEN / RTF / TAG 等 60+ 个），公开来源也查不到。
+> 凭空宣称出处是诚信问题，所以宁可如实标注为自研。
 
 **模板是数据，引擎是代码。** 加模板 = 往 `lib/builtin-templates.js` 加一个对象，
 不用碰引擎；维度、输出结构、约束都在 `defaults` 里，改配置即可。
@@ -178,6 +189,10 @@ Agent 侧对应工具是 `prompt_template`（**不传 `template` 就会先列出
 > （静默渲染成空最难发现）；条件位 `{{#if x}}` 缺变量按"假"处理
 > （这本就是"有才渲染"的惯用法，否则可选变量根本没法写）。
 > 写错路径的风险由模板注册时的**静态审计**兜底告警。
+
+**加一个模板要改几处？一处** —— 往 `lib/builtin-templates.js` 加一个数据对象即可：
+引擎不用动，**UI 也不用动**（变量表单由 `variables` schema 自动生成），
+工具与路由自动带上。`render()` 的边界情况（缺变量 / 模板名错）返回结构化 `errors`，**不抛异常**。
 
 ---
 
@@ -256,7 +271,7 @@ dsh-prompt-compiler/
 │   ├── settings.js   # 设置持久化（~/.dsh/prompt-compiler/settings.json）
 │   ├── client.js     # client 半：UI + 设置页（零构建，手写 ModuleLoader）
 │   └── sdk.js        # 自包含 defineTool
-├── tests/            # node --test：templates / builtin-templates / service / settings / index / client，84 个用例
+├── tests/            # node --test：templates / builtin-templates / service / settings / index / client，94 个用例
 ├── docs/             # 竞品审计、官方文档对齐、服务化先例调研
 └── .github/workflows/  # ci.yml（Node 22/24 矩阵）、release.yml（tag 自动发布）
 ```
@@ -266,7 +281,7 @@ dsh-prompt-compiler/
 ```bash
 npm ci         # 需 package-lock.json（CI 同款；lockfile 已入库）
 npm run check  # 语法检查
-npm test       # 84 个用例
+npm test       # 94 个用例
 ```
 
 CI 在 Node 22.x / 24.x 上跑 `npm ci → check → test`。

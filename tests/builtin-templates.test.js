@@ -36,12 +36,42 @@ const FULL = {
   deployment: 'GitHub Pages',
 }
 
-test('内置模板：至少有一个；每个都过形状校验与静态审计', () => {
-  assert.ok(BUILTIN_TEMPLATES.length >= 1, '至少要有一个内置模板')
+test('内置模板：至少 3 个（F2 要求）；每个都过形状校验与静态审计', () => {
+  assert.ok(BUILTIN_TEMPLATES.length >= 3, `F2 要求至少 3 个模板，实际 ${BUILTIN_TEMPLATES.length}`)
   for (const t of BUILTIN_TEMPLATES) {
     assert.deepEqual(validateTemplateShape(t), [], `模板 ${t.id} 形状不合法`)
     const audit = auditTemplate(t)
     assert.equal(audit.ok, true, `模板 ${t.id} 引用了未声明变量：${audit.missing.join('、')}`)
+  }
+})
+
+test('内置模板：每个都能只给必填就跑通（通用用例，新增模板自动纳入）', () => {
+  const reg = createRegistry(BUILTIN_TEMPLATES)
+  for (const t of BUILTIN_TEMPLATES) {
+    // 从 schema 反推最小输入，避免每加一个模板就要手写一份样例
+    const vars = {}
+    for (const [k, d] of Object.entries(t.variables.properties || {})) {
+      if (!d.required) continue
+      const ty = d.type === 'string[]' ? 'array' : d.type
+      vars[k] = ty === 'array' ? ['x'] : ty === 'object' ? {} : 'x'
+    }
+    const r = reg.render(t.id, vars)
+    assert.equal(r.ok, true, `模板 ${t.id} 最小输入应能渲染，实际：${r.ok ? '' : r.errors.join('|')}`)
+    assert.ok(r.text.length > 200, `模板 ${t.id} 产出过短，可能缺段`)
+    assert.match(r.text, /# 角色/, `模板 ${t.id} 应含角色段`)
+    assert.match(r.text, /# 约束/, `模板 ${t.id} 应含约束段`)
+  }
+})
+
+test('内置模板：每个都拒绝缺必填，且错误点名到具体变量', () => {
+  const reg = createRegistry(BUILTIN_TEMPLATES)
+  for (const t of BUILTIN_TEMPLATES) {
+    const r = reg.render(t.id, {})
+    assert.equal(r.ok, false, `模板 ${t.id} 缺必填应失败`)
+    const req = Object.entries(t.variables.properties || {}).filter(([, d]) => d.required).map(([k]) => k)
+    for (const k of req) {
+      assert.ok(r.errors.some(e => e.includes(k)), `模板 ${t.id} 的错误应点名 ${k}`)
+    }
   }
 })
 
@@ -122,9 +152,66 @@ test('portfolio-review：兜底与"不许编造"的约束必须在场（这是�
 test('注册表：list() 回元数据但不回模板正文', () => {
   const reg = createRegistry(BUILTIN_TEMPLATES)
   const list = reg.list()
-  assert.ok(list.length >= 1)
+  assert.ok(list.length >= 3)
   for (const m of list) {
     assert.ok(m.id && m.title && m.category, '元数据应含 id/title/category')
     assert.equal(m.template, undefined, '不得回传模板正文')
   }
+})
+
+// ---------------------------------------------------------------- 新增模板
+
+test('code-review：结构完整，6 个维度 + 6 段输出 + 严重级别都在', () => {
+  const reg = createRegistry(BUILTIN_TEMPLATES)
+  const r = reg.render('code-review', { code: 'function f() { return 1 }', language: 'JavaScript' })
+  assert.equal(r.ok, true, r.ok ? '' : r.errors.join('|'))
+  const t = r.text
+  assert.equal((t.match(/^\d+\. \*\*/gm) || []).length, 6, '应有 6 个维度')
+  assert.equal(
+    (t.match(/^\d+\. (总体判断|必须先修的问题|应该修的问题|可以更好|值得肯定的地方|测试建议)/gm) || []).length,
+    6, '应有 6 段输出'
+  )
+  assert.match(t, /阻断/, '应带严重级别')
+  assert.match(t, /JavaScript/)
+  assert.match(t, /不要凭猜测编造问题/, '防编造兜底必须在场')
+})
+
+test('code-review：可选背景缺失时整条省略，不产出空条目', () => {
+  const reg = createRegistry(BUILTIN_TEMPLATES)
+  const t = reg.render('code-review', { code: 'x' }).text
+  for (const ghost of ['- 语言 / 框架：', '- 背景：', '- 特别关注：']) {
+    assert.ok(!t.includes(ghost), `未提供时不应出现「${ghost}」`)
+  }
+})
+
+test('🔴 code-review：用户代码里的 {{...}} 必须原样保留（不得被当成模板变量二次解析）', () => {
+  const reg = createRegistry(BUILTIN_TEMPLATES)
+  // 这是真实风险：引擎是单趟替换，插入的值不应再被解析。若哪天改成递归渲染，
+  // 用户提交的 Vue / Jinja / Handlebars 模板代码会被吃掉、或误报"未定义变量"。
+  const snippet = '<div>{{ user.name }}</div>\n{% if x %}{{ y }}{% endif %}'
+  const r = reg.render('code-review', { code: snippet })
+  assert.equal(r.ok, true, `含模板语法的代码不应导致渲染失败：${r.ok ? '' : r.errors.join('|')}`)
+  assert.ok(r.text.includes('{{ user.name }}'), '代码里的 {{ user.name }} 应逐字保留')
+  assert.ok(r.text.includes('{% if x %}{{ y }}{% endif %}'), '代码里的 Jinja 语法应逐字保留')
+})
+
+test('prompt-review：结构完整，含评分段与 6 个维度', () => {
+  const reg = createRegistry(BUILTIN_TEMPLATES)
+  const r = reg.render('prompt-review', { draft: '帮我写个爬虫', targetModel: 'Claude' })
+  assert.equal(r.ok, true, r.ok ? '' : r.errors.join('|'))
+  const t = r.text
+  assert.equal((t.match(/^\d+\. \*\*/gm) || []).length, 6, '应有 6 个维度')
+  assert.equal(
+    (t.match(/^\d+\. (总体评分|缺失要素|歧义点|改写建议|可直接追加的补强段|需要我补充的信息)/gm) || []).length,
+    6, '应有 6 段输出'
+  )
+  assert.match(t, /帮我写个爬虫/, '原文应被逐字带上')
+  assert.match(t, /0–100/)
+})
+
+test('三个内置模板：id 齐全且都是 review 类', () => {
+  const reg = createRegistry(BUILTIN_TEMPLATES)
+  const list = reg.list()
+  assert.deepEqual(list.map(t => t.id).sort(), ['code-review', 'portfolio-review', 'prompt-review'])
+  assert.equal(list.filter(t => t.category === 'review').length, 3)
 })

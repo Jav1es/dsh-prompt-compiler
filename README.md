@@ -5,7 +5,10 @@
 
 它有两个身份：给**人**用的 UI 插件（composer 工具栏「✨ 编译」+ DSH 设置页），
 以及一个**可编程的 prompt 编译层** —— 其他插件与 Agent 可以直接
-`ctx.promptCompiler.analyze / elicit / compile`，或调用 `prompt_compile` 工具。
+`ctx.promptCompiler.analyze / elicit / compile / render`，或调用 `prompt_compile` / `prompt_template` 工具。
+
+两条互补的编译路径：**`compile` 让 LLM 把草稿改写成 prompt**（适合形态未知的草稿），
+**`render` 用模板确定性渲染**（适合"按固定维度评一遍"这类要求可复现的评审任务）。
 
 [![npm version](https://img.shields.io/npm/v/dsh-prompt-compiler?color=4d6bfe&label=npm)](https://www.npmjs.com/package/dsh-prompt-compiler)
 [![npm downloads](https://img.shields.io/npm/dm/dsh-prompt-compiler)](https://www.npmjs.com/package/dsh-prompt-compiler)
@@ -129,6 +132,55 @@ Agent 侧则有开箱即用的工具：给一句粗糙指令，模型可以自�
 
 ---
 
+## 用法三：模板编译（评审类任务）
+
+有些任务**不该让模型自由发挥** —— 「按这套固定维度把我的主页评一遍」，
+如果每次维度不同、输出结构也变，结果就不可比、不可复现。这类任务走**模板**：
+
+```js
+// 确定性地渲染：不调 LLM、零成本、同一输入永远同一结果
+const { ok, text, errors } = ctx.promptCompiler.render('portfolio-review', {
+  siteUrl: 'https://jav1es.github.io/portfolio/',
+  targetRoles: ['企业级 AI Agent 开发工程师', 'FDE'],
+  background: {
+    years: '5 年+',
+    metrics: ['RAG 93.3% @3', '6 个 MIT 开源', 'CI 全绿'],
+  },
+  coreSkills: ['企业级智能体', 'RAG', '评测与可观测性', 'MCP'],
+})
+
+// 有哪些模板、各自要什么变量
+ctx.promptCompiler.listTemplates()
+```
+
+Agent 侧对应工具是 `prompt_template`（**不传 `template` 就会先列出可用模板**）。
+
+**`render` 与 `compile` 的分工** —— 刻意做成两个并列能力，而不是重载 `compile`：
+
+| | `compile(draft, options)` | `render(templateId, vars)` |
+|---|---|---|
+| 干什么 | 让 **LLM** 把粗糙草稿改写成 prompt | 用**模板**渲染出 prompt |
+| 确定性 | 否（每次可能不同） | **是**（同输入同输出） |
+| 成本 | 一次模型调用 | **零** |
+| 适合 | 形态未知的草稿 | 要素固定的评审 / 转换 |
+
+### 内置模板
+
+| id | category | 说明 |
+|---|---|---|
+| `portfolio-review` | review | 作品集 / 个人主页评审。四个视角（简历顾问 / UIUX / 技术招聘 / HR）、**10 个评估维度**、按招聘方真实浏览节奏（5 秒 / 30 秒 / 2 分钟）分析，输出 **9 段带 P0–P2 优先级**的整改清单；含"无法访问网址时不许编造"的兜底 |
+
+**模板是数据，引擎是代码。** 加模板 = 往 `lib/builtin-templates.js` 加一个对象，
+不用碰引擎；维度、输出结构、约束都在 `defaults` 里，改配置即可。
+渲染失败（变量缺失 / 模板名错）返回结构化 `errors`，**不抛异常**。
+
+> **两种"未定义"的语义刻意不同**：输出位 `{{x}}` 缺变量**直接报错**
+> （静默渲染成空最难发现）；条件位 `{{#if x}}` 缺变量按"假"处理
+> （这本就是"有才渲染"的惯用法，否则可选变量根本没法写）。
+> 写错路径的风险由模板注册时的**静态审计**兜底告警。
+
+---
+
 ## 设置
 
 **DSH 设置 → Prompt Compiler**。五组配置，全部落到宿主本机
@@ -198,11 +250,13 @@ Agent 侧则有开箱即用的工具：给一句粗糙指令，模型可以自�
 dsh-prompt-compiler/
 ├── lib/
 │   ├── index.js      # host 半：工具 / 提示词 / HTTP 路由
-│   ├── service.js    # promptCompiler 服务（analyze / elicit / compile + LLM 调用）
+│   ├── service.js    # promptCompiler 服务（analyze / elicit / compile / render + LLM 调用）
+│   ├── templates.js  # 零依赖模板引擎（渲染 / 校验 / 静态审计 / 注册表）
+│   ├── builtin-templates.js  # 内置模板数据（纯数据，加模板只改这里）
 │   ├── settings.js   # 设置持久化（~/.dsh/prompt-compiler/settings.json）
 │   ├── client.js     # client 半：UI + 设置页（零构建，手写 ModuleLoader）
 │   └── sdk.js        # 自包含 defineTool
-├── tests/            # node --test：service / settings / client 三套，43 个用例
+├── tests/            # node --test：templates / builtin-templates / service / settings / index / client，84 个用例
 ├── docs/             # 竞品审计、官方文档对齐、服务化先例调研
 └── .github/workflows/  # ci.yml（Node 22/24 矩阵）、release.yml（tag 自动发布）
 ```
@@ -212,7 +266,7 @@ dsh-prompt-compiler/
 ```bash
 npm ci         # 需 package-lock.json（CI 同款；lockfile 已入库）
 npm run check  # 语法检查
-npm test       # 43 个用例
+npm test       # 84 个用例
 ```
 
 CI 在 Node 22.x / 24.x 上跑 `npm ci → check → test`。

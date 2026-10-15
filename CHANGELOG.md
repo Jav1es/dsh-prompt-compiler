@@ -5,6 +5,39 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+
+- **模板编译层**（`ctx.promptCompiler.render` / `listTemplates`）：与 LLM 编译**并列**的第二条路径。
+  `compile(draft)` 让 LLM 把粗糙草稿改写成 prompt（不确定、需推理）；
+  `render(templateId, vars)` 用模板**确定性**渲染（同输入同输出、零模型成本）——
+  适合"按固定维度评一遍"这类要求可复现的任务。
+  - **刻意不重载 `compile`**：它已被工具 / 三个路由 / README / 作品集消费，重载会破。
+- **零依赖模板引擎**（`lib/templates.js`）：`{{var}}` / 点路径 / `{{#each}}` / `{{#if}}` / `\{{` 转义；
+  `defaults ← vars` 深合并；必填与类型校验；模板注册时**静态审计**引用的变量是否有出处。
+  之所以手写而不是引入 zod + handlebars：本插件的卖点之一是零运行时依赖（`dependencies` 为空）。
+- **内置模板 `portfolio-review`**（category: `review`）：作品集 / 个人主页评审。
+  四个视角、10 个评估维度、按招聘方真实浏览节奏（5 秒 / 30 秒 / 2 分钟）分析，
+  输出 9 段带 P0–P2 优先级的整改清单，含"无法访问网址时严禁编造"的兜底。
+- **工具 `prompt_template`**：不传 `template` 先列出可用模板，传了就渲染；
+  渲染失败回结构化错误 JSON，让模型能自我修正而不是被异常打断。
+- **HTTP 路由** `/api/templates`、`/api/render`。
+
+### 说明
+
+- 🔴 **两种"未定义"的语义刻意不同**：输出位 `{{x}}` 缺变量**直接报错**
+  （静默渲染成空是最难发现的一类失败）；条件位 `{{#if x}}` 缺变量按"假"处理
+  （这本来就是"有才渲染"的惯用法，否则可选变量根本没法写）。
+  首版把两者都当错误，导致只给必填变量时**整个模板渲染失败**——
+  这条边界现在有专门的用例钉住。
+- 用户给的原始设计里，Handlebars 模板引用了 `{{role}}` / `{{task}}` / `{{#dimensions}}`，
+  但这三个变量在变量表里都没定义。已全部补进 `defaults`（10 个维度做成默认值，
+  正好兑现"加维度只改配置、不改模板"）；引擎侧也加了静态审计 + 输出位报错双重兜底。
+- 测试从 43 增至 **84**，新增 `tests/{templates,builtin-templates,index}.test.js`。
+  其中 `tests/index.test.js` 是 host 半**首次**有测试覆盖（用 stub ctx 真实执行 `apply`，
+  覆盖工具注册、路由 200/400/404、1MB 限长、非法 JSON）。
+
 ## [0.2.1] - 2026-10-14
 
 **纯文档版本 —— 代码零改动。** 之所以要单独发一个版本，是因为 npm 的**版本不可变**：
@@ -117,6 +150,7 @@
   「采用并回填」（仅回填，不自动发送）。
 - **E 组 LLM 接入**：`analyze` / `compile` 接 `ctx.llm.stream`（标 `source:{kind:'plugin'}`）。
 
+[Unreleased]: https://github.com/Jav1es/dsh-prompt-compiler/compare/v0.2.1...HEAD
 [0.2.1]: https://github.com/Jav1es/dsh-prompt-compiler/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Jav1es/dsh-prompt-compiler/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Jav1es/dsh-prompt-compiler/releases/tag/v0.1.0

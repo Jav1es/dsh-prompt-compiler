@@ -525,5 +525,51 @@ function startHttp(handler) {
   })
 }
 
+// ---------------------------------------------------------------- 模板编译（render / listTemplates）
+//
+// render 与 compile 的分工：compile 走 LLM（不确定、需推理），render 走模板
+// （确定、可复现、零成本）。这里同时验证"两者并存互不影响"——因为 render 是**新增**
+// 能力，绝不能碰坏已被工具 / 路由 / README / 作品集消费的 compile。
+
+test('render: 确定性渲染——同一输入两次结果必须完全一致（这正是它与 compile 的分工）', () => {
+  const vars = { siteUrl: 'https://x.dev', targetRoles: ['A'] }
+  const a = pc.render('portfolio-review', vars)
+  const b = pc.render('portfolio-review', vars)
+  assert.equal(a.ok, true, a.ok ? '' : a.errors.join('|'))
+  assert.equal(a.text, b.text, 'render 必须确定性，否则"可复现"这个卖点不成立')
+  assert.match(a.text, /https:\/\/x\.dev/)
+  assert.equal(a.id, 'portfolio-review')
+  assert.equal(typeof a.version, 'string')
+})
+
+test('render 与 compile 并存互不影响（compile 签名与行为零改动）', async () => {
+  const c = await pc.compile('帮我写个爬虫', {})
+  assert.equal(typeof c.compiled, 'string')
+  assert.ok(c.compiled.length > 0)
+  assert.equal(c.degraded, true, '无 llm 时仍应规则降级')
+  // 同一实例上 render 依然可用
+  assert.equal(pc.render('portfolio-review', { siteUrl: 'https://x.dev', targetRoles: ['A'] }).ok, true)
+})
+
+test('render: 失败返回结构化错误、不抛（模板不存在 / 缺必填）', () => {
+  const nf = pc.render('nope', {})
+  assert.equal(nf.ok, false)
+  assert.ok(nf.errors.some(e => e.includes('未找到模板')))
+
+  const bad = pc.render('portfolio-review', {})
+  assert.equal(bad.ok, false)
+  assert.ok(bad.errors.some(e => e.includes('siteUrl')), `应点名 siteUrl，实际：${bad.errors.join('|')}`)
+})
+
+test('listTemplates: 至少含 portfolio-review，且不回传模板正文', () => {
+  const list = pc.listTemplates()
+  assert.ok(Array.isArray(list))
+  const pr = list.find(t => t.id === 'portfolio-review')
+  assert.ok(pr, '应含 portfolio-review')
+  assert.equal(pr.category, 'review')
+  assert.equal(pr.template, undefined, '不得回传模板正文')
+  assert.ok(pr.variables && pr.variables.properties, '应带变量 schema 供 UI 生成表单')
+})
+
 
 

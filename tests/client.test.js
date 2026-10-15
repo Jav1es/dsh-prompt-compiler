@@ -249,6 +249,42 @@ test('client：设置页根容器须留出底部空隙，否则最后一行设�
     '.pcs-actions 应为 position:sticky;bottom:0（本测试的前提）')
 })
 
+test('client：卡片不得让背景会话正文透出来（截图要公开发布的隐私回归）', () => {
+  // 起因：.pc-card 直接吃 var(--dsw-alias-bg-overlay)，而该 token 在本主题下带 alpha，
+  // 遮罩又只压了 35% ⇒ 背景会话正文透过卡片清晰可读（2026-10-16 实机截图复现，
+  // 背景里能看到简历文件名与 secrets 字样）。既伤可读性，也让截图无法公开。
+  const card = /\.pc-card\{([^}]*)\}/.exec(CLIENT_SRC)
+  assert.ok(card, '应能取到 .pc-card 规则')
+  assert.match(card[1], /backdrop-filter:\s*blur/,
+    '.pc-card 必须有 backdrop-filter 模糊，否则背景正文会透过来')
+
+  const mask = /\.pc-mask\{([^}]*)\}/.exec(CLIENT_SRC)
+  assert.ok(mask, '应能取到 .pc-mask 规则')
+  const alpha = /rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*([\d.]+)\s*\)/.exec(mask[1])
+  assert.ok(alpha, '.pc-mask 应使用 rgba 黑色遮罩，便于断言不透明度')
+  assert.ok(Number(alpha[1]) >= 0.5,
+    '遮罩不透明度（' + alpha[1] + '）须不低于 0.5，否则背景文字仍可辨认')
+})
+
+test('client：设置页不得回显含用户名的绝对路径（截图要公开发布的隐私回归）', async () => {
+  // 宿主回传的 _path 是绝对路径（C:\Users\<用户名>\...）。原样显示会
+  // 把本机用户名带进截图，而截图是要发到 GitHub / npm 的。
+  const s = sampleSettings(true)
+  s._path = 'C:\\Users\\Administrator\\.dsh\\prompt-compiler\\settings.json'
+  const { registered, stub } = loadClient(s)
+  const Comp = registered['settings.section'].comp
+
+  stub.resetHooks()
+  stub.render(stub.React.createElement(Comp, {}), 0)
+  await stub.runEffects()
+  const tree = stub.render(stub.React.createElement(Comp, {}), 0)
+
+  assert.ok(tree.indexOf('Administrator') === -1,
+    '设置页不得回显本机用户名；实际: ' + tree.slice(0, 400))
+  assert.ok(tree.indexOf('~\\.dsh') !== -1,
+    '应显示 ~ 缩写的配置路径；实际: ' + tree.slice(0, 400))
+})
+
 test('client：settings.section 注册失败不得拖垮整个 client 半部', () => {
   // 模拟宿主版本没有该插槽：inject 抛错时其余插槽仍必须注册成功
   let loadedDef = null

@@ -107,6 +107,9 @@ function loadClient(settingsPayload, opts) {
     navigator: { clipboard: { writeText() { return Promise.resolve() } } },
   }
   sandbox.globalThis = sandbox
+  // 真实浏览器里有 AbortController；沙箱必须一并提供，
+  // 否则「取消编译」依赖的中断链路在单测里根本走不到（会静默退化成不可取消）。
+  sandbox.AbortController = AbortController
   // 默认 fetch 只回设置；模板类测试用 opts.fetch 按路径分流
   sandbox.fetch = (opts && opts.fetch) || (() => Promise.resolve({
     ok: true,
@@ -299,6 +302,9 @@ test('client：settings.section 注册失败不得拖垮整个 client 半部', (
     fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, settings: sampleSettings(false) }) }),
   }
   sandbox.globalThis = sandbox
+  // 真实浏览器里有 AbortController；沙箱必须一并提供，
+  // 否则「取消编译」依赖的中断链路在单测里根本走不到（会静默退化成不可取消）。
+  sandbox.AbortController = AbortController
   vm.createContext(sandbox)
   vm.runInContext(CLIENT_SRC, sandbox)
 
@@ -514,5 +520,51 @@ test('client：渲染失败（400）时显示可读错误，不白屏', async ()
   const text = plainText(ov)
   assert.ok(text.indexOf('缺少必填变量') !== -1, '应把 host 的可读错误显示出来')
   assert.ok(text.indexOf('渲染') !== -1, '失败后应留在表单，允许改了再试')
+  assert.deepEqual(stub.problems, [], '渲染不得有结构性错误')
+})
+
+test('client：编译中可中断——busy 卡提供「取消编译」，点了立刻回到可改草稿的状态', async () => {
+  // /analyze 永不 resolve，模拟「卡在等宿主 LLM」；只有收到 abort 才 reject。
+  let aborted = false
+  const fetchImpl = (url, init) => new Promise((_resolve, reject) => {
+    const sig = init && init.signal
+    if (!sig) return // 没有 signal 就说明没接上 AbortController —— 下面会断言失败
+    sig.addEventListener('abort', () => {
+      aborted = true
+      const e = new Error('The user aborted a request.')
+      e.name = 'AbortError'
+      reject(e)
+    })
+  })
+  const { registered, stub } = loadClient(sampleSettings(true), { fetch: fetchImpl })
+  const Comp = registered['conversation.input.right'].comp
+  const Overlay = registered['shell.overlay'].comp
+
+  // ① 有草稿 → 点「编译」→ 进入 busy
+  stub.resetHooks()
+  const compEl = Comp({ useInput: () => '帮我写个爬虫', inputActions: { setDraft() {} } })
+  const runBtn = buttonsOf(compEl).find((b) => {
+    const t = plainText(b)
+    return t.indexOf('编译') !== -1 && t.indexOf('模板') === -1
+  })
+  assert.ok(runBtn, '应找到「编译」按钮')
+  runBtn.props.onClick()
+
+  // ② busy 卡必须给出中断入口（旧实现只有转圈，用户只能干等）
+  let ov = openCard(stub, Overlay)
+  assert.ok(plainText(ov).indexOf('正在编译') !== -1, 'busy 时应显示编译中卡片')
+  const cancelBtn = buttonsOf(ov).find((b) => plainText(b).indexOf('取消编译') !== -1)
+  assert.ok(cancelBtn, 'busy 卡必须提供「取消编译」中断按钮')
+
+  // ③ 点取消 → 真的 abort + 立刻退出 busy（不必等那个永不返回的请求）
+  cancelBtn.props.onClick()
+  await new Promise((r) => setTimeout(r, 20))
+
+  assert.ok(aborted, '点「取消编译」必须真的 abort 在途请求，否则连接仍被占着')
+  stub.resetHooks()
+  ov = openCard(stub, Overlay)
+  const text = plainText(ov)
+  assert.ok(text.indexOf('正在编译') === -1, '取消后不应再显示编译中卡片')
+  assert.ok(text.indexOf('编译失败') === -1, '用户主动取消不该弹错误卡')
   assert.deepEqual(stub.problems, [], '渲染不得有结构性错误')
 })

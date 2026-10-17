@@ -97,6 +97,19 @@ dsh plugin --profile desktop add git+https://github.com/Jav1es/dsh-prompt-compil
 顶部徽章会明确告诉你**这一次是哪个模型在干活**（宿主模型 / 外部模型 · 模型名），
 下方是编译结果，以及模型自行补上的「自动假设」供你核对 —— 不让你在黑暗里猜。
 
+**编译中可以反悔。** 最慢的一步是等模型，不想等了就点「取消编译」——立刻回到输入框，
+草稿一个字都不丢，改完再编：
+
+![编译中可取消，草稿保留](./docs/assets/compile-cancellable.png)
+
+### 不想临时想变量？用模板
+
+除了「把草稿编译成 prompt」，还有一条**确定性**路径：「📋 模板」。
+模板按固定维度与输出结构渲染，**结果可复现、不消耗模型调用**；变量表单按模板 schema
+自动生成，所以新增模板不用改前端。
+
+![选择模板：作品集评审 / 代码审查 / Prompt 评审](./docs/assets/template-card.png)
+
 ---
 
 ## 用法二：给插件与 Agent 用（差异化核心）
@@ -271,7 +284,7 @@ dsh-prompt-compiler/
 │   ├── settings.js   # 设置持久化（~/.dsh/prompt-compiler/settings.json）
 │   ├── client.js     # client 半：UI + 设置页（零构建，手写 ModuleLoader）
 │   └── sdk.js        # 自包含 defineTool
-├── tests/            # node --test：templates / builtin-templates / service / settings / index / client，94 个用例
+├── tests/            # node --test：templates / builtin-templates / service / settings / index / client，97 个用例
 ├── docs/             # 竞品审计、官方文档对齐、服务化先例调研
 └── .github/workflows/  # ci.yml（Node 22/24 矩阵）、release.yml（tag 自动发布）
 ```
@@ -281,7 +294,7 @@ dsh-prompt-compiler/
 ```bash
 npm ci         # 需 package-lock.json（CI 同款；lockfile 已入库）
 npm run check  # 语法检查
-npm test       # 94 个用例
+npm test       # 97 个用例
 ```
 
 CI 在 Node 22.x / 24.x 上跑 `npm ci → check → test`。

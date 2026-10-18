@@ -571,5 +571,61 @@ test('listTemplates: 至少含 portfolio-review，且不回传模板正文', () 
   assert.ok(pr.variables && pr.variables.properties, '应带变量 schema 供 UI 生成表单')
 })
 
+// —— F1 五维评分接入（analyze 带 before 分，compile 带 After 分 + delta） ——
+// 核心不变量：**三条 compile 路径都必须带 scoreDelta**。
+// 少哪条，Before/After 对比就会在那一档静默失效（UI 显示空白而不是报错）。
+
+const GOOD_DRAFT =
+  '目标：抓取 news.example.com 首页新闻标题。背景：给运营做每日速览，读者是非技术同学。' +
+  '约束：仅用 Python requests + BeautifulSoup，超时 10 秒，不爬 robots.txt 禁止的页面。' +
+  '输出格式：每行一条 JSON，字段 title/url。验收标准：连续跑 3 天，每天至少 20 条且字段非空。'
+
+test('F1 · analyze 必须带 score5d（规则降级路径）', async () => {
+  const out = await pc.analyze('帮我写个爬虫')
+  assert.ok(out.score5d, 'analyze 结果缺 score5d')
+  assert.equal(typeof out.score5d.total, 'number')
+  for (const k of ['goal', 'context', 'constraint', 'acceptance', 'ambiguity']) {
+    assert.ok(out.score5d.dims[k], `score5d 缺维度 ${k}`)
+  }
+})
+
+test('F1 · analyze 必须带 score5d（LLM 路径）', async () => {
+  const svc = createPromptCompiler({ llm: fakeHost() })
+  const out = await svc.analyze('帮我写个爬虫')
+  assert.equal(out.score, 77, 'LLM 的 score 仍保留在 score 字段（兼容旧消费者）')
+  assert.ok(out.score5d, 'LLM 路径也要带 score5d')
+  assert.notEqual(out.score5d.total, out.score, '五维分与 LLM 分不混算，不应恰好同值')
+})
+
+test('F1 · compile 带 scoreDelta（规则降级路径）', async () => {
+  const out = await pc.compile('帮我写个爬虫')
+  assert.ok(out.scoreDelta, 'compile 结果缺 scoreDelta')
+  assert.equal(out.degraded, true)
+  assert.equal(out.scoreDelta.total.after, out.score5d.total, 'after 必须等于结果自身的五维总分')
+  assert.equal(out.scoreDelta.perDim && Object.keys(out.scoreDelta.perDim).length, 5, 'perDim 应含五个维度')
+})
+
+test('F1 · compile 带 scoreDelta（LLM 宿主路径）—— 三条路径都要有', async () => {
+  const svc = createPromptCompiler({ llm: fakeHost() })
+  const out = await svc.compile('帮我写个爬虫')
+  assert.equal(out.degraded, false)
+  assert.ok(out.scoreDelta, 'LLM 路径缺 scoreDelta')
+  assert.equal(typeof out.scoreDelta.total.after, 'number')
+})
+
+test('F1 · 编译应当提升分数：完整 draft 的 After ≥ Before', async () => {
+  const before = await pc.analyze(GOOD_DRAFT)
+  const out = await pc.compile(GOOD_DRAFT)
+  assert.ok(out.scoreDelta.total.after >= out.scoreDelta.total.before,
+    `编译后反而掉分：${out.scoreDelta.total.before} → ${out.scoreDelta.total.after}`)
+  assert.ok(before.score5d.total > 0, 'Good draft 的 before 分不应为 0（否则对比无意义）')
+})
+
+test('F1 · 五维分确定性：同一 draft 两次 analyze 完全相等（可进 CI）', async () => {
+  const a = await pc.analyze(GOOD_DRAFT)
+  const b = await pc.analyze(GOOD_DRAFT)
+  assert.deepEqual(a.score5d, b.score5d)
+})
+
 
 

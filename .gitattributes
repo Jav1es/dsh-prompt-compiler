@@ -1,0 +1,16 @@
+# 换行统一 LF —— 与 scripts/verify-static.cjs 的「仓库内文本文件换行统一 LF」检查配套。
+#
+# 为什么需要它：本仓库在 Windows 上开发，`core.autocrlf=true` 会把 LF 检出成 CRLF。
+# 不固定的话，不同机器提交的换行不一致，diff 里会出现整文件的伪改动，
+# 而 `verify:static` 查的是 git blob（正确口径），churn 会不断触发告警。
+#
+# 注意：这里只声明「入库用 LF」，不改工作区检出行为（那由 core.autocrlf 决定）。
+* text=auto eol=lf
+
+# 明确按二进制处理，避免 git 试图转换
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

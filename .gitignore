@@ -14,3 +14,6 @@ Thumbs.db
 # 编辑器
 .vscode/
 .idea/
+
+# 评测运行产物（每次 `npm run eval` 重新生成，不入库）
+evals/last-report.json

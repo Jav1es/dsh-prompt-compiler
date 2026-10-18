@@ -188,3 +188,43 @@ test('路由: 非法 JSON → 400 而不是把进程带崩', async () => {
   }, res)
   assert.equal(res.statusCode, 400)
 })
+
+// —— E2：交互式澄清路由 ——
+// 关键不变量：**没有 userQuestions 的宿主上，这个端点也必须立刻返回**，
+// 不能挂着等 60 秒把前端吊死（agentless 是本插件的常态环境）。
+
+test('路由 E2 · 无 userQuestions 时 elicit-interactive 立即返回问题列表（不阻塞）', async () => {
+  const handler = registered.routes[0].handler
+  const started = Date.now()
+  const r = await callRoute(handler, '/__dsh-prompt-compiler/api/elicit-interactive', {
+    draft: '帮我写个爬虫',
+  })
+  const elapsed = Date.now() - started
+  assert.equal(r.status, 200)
+  assert.equal(r.json.asked, false)
+  assert.equal(r.json.reason, 'no_user_questions')
+  assert.ok(Array.isArray(r.json.questions) && r.json.questions.length >= 1, '应回问题列表供 UI 自行渲染')
+  assert.ok(elapsed < 5000, `耗时 ${elapsed}ms —— 无 provider 时不该阻塞`)
+})
+
+test('路由 E2 · draft 已经够清楚时返回空问题列表', async () => {
+  const handler = registered.routes[0].handler
+  const rich =
+    '目标：抓取 news.example.com 首页标题。约束：仅用 requests，超时 10 秒。' +
+    '输出格式：每行 JSON。验收标准：连续跑 3 天每天至少 20 条。'
+  const r = await callRoute(handler, '/__dsh-prompt-compiler/api/elicit-interactive', { draft: rich })
+  assert.equal(r.status, 200)
+  assert.equal(r.json.asked, false)
+  assert.equal(r.json.reason, 'no_questions')
+  assert.equal(r.json.questions.length, 0)
+})
+
+test('路由 E2 · timeoutMs 被夹到上限（防止前端传巨大值把请求挂死）', async () => {
+  const handler = registered.routes[0].handler
+  const r = await callRoute(handler, '/__dsh-prompt-compiler/api/elicit-interactive', {
+    draft: '帮我写个爬虫',
+    timeoutMs: 999999999,
+  })
+  assert.equal(r.status, 200)
+  assert.equal(r.json.reason, 'no_user_questions')
+})

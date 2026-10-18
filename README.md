@@ -13,10 +13,14 @@
 [![npm version](https://img.shields.io/npm/v/dsh-prompt-compiler?color=4d6bfe&label=npm)](https://www.npmjs.com/package/dsh-prompt-compiler)
 [![npm downloads](https://img.shields.io/npm/dm/dsh-prompt-compiler)](https://www.npmjs.com/package/dsh-prompt-compiler)
 [![CI](https://github.com/Jav1es/dsh-prompt-compiler/actions/workflows/ci.yml/badge.svg)](https://github.com/Jav1es/dsh-prompt-compiler/actions/workflows/ci.yml)
+[![tests](https://img.shields.io/badge/tests-192%20passing-brightgreen)](./tests)
 [![license](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![node](https://img.shields.io/badge/node-%5E22.19.0%20%7C%7C%20%3E%3D24-informational)](package.json)
+[![dsh](https://img.shields.io/badge/dsh-%5E0.2.0--rc.2-blueviolet)](package.json)
 
 ![DSH 设置 → Prompt Compiler](./docs/assets/settings-page.png)
+
+> 📄 一页版介绍（含 Before/After 数据、复跑方法、23 个仓库横向对照）：[docs/portfolio.html](./docs/portfolio.html)
 
 ---
 
@@ -26,8 +30,12 @@
 
 > `帮我写个爬虫，抓点新闻，越快越好`
 
-本插件给它做体检，结果是 **30/100**，缺：目标的具体说明、约束条件（语言/库/robots/速度口径）、
-上下文（运行环境、去重、存储）、验证标准、输出格式；另有「越快越好」无度量标准等 4 处歧义。
+本插件给它做体检，结果是 **12/100**，缺：目标的具体说明、约束条件（语言/库/robots/速度口径）、
+上下文（运行环境、去重、存储）、验证标准、输出格式。
+
+> **歧义维为什么是 0 而不是"扣分"**：这一条实质正文不足 20 字，评分器判定「无从评估歧义控制」，
+> 明确给 0 而不是白送分。这是 F1 的抗刷分设计 —— 短到没什么可评的时候，**不装作评过了**。
+> 换成长一点的草稿（如「帮我写个爬虫，抓点新闻，越快越好，别用 Selenium」），歧义维才会真正开始计分。
 
 **同一个 draft，编译后长这样**（真实输出，节选）：
 
@@ -53,6 +61,34 @@
 ```
 
 差别不在文风，在于**原来靠模型猜的那些决策，现在被显式写成约束和验收标准**。
+
+---
+
+## 它不会让你干等（0.4.1）
+
+慢和死看起来一模一样：界面纹丝不动，你不知道是在跑还是挂了。这一版专门治这个。
+
+真实宿主上量到的 **215.7 秒**，同一条 draft 换成会话在跑的模型只要 **5.8 秒** —— 慢 37 倍。
+三个原因叠在一起：
+
+| 原因 | 修法 |
+|---|---|
+| 模型选择盲取 `listModels(provider)[0]`，拿到 `hy4-preview-f`（一次编译吐 **2250+ chunk**） | 改为**会话当前模型 → provider 优选档 → 列表首个**，且前两级都要在清单里确认归属（不靠名字猜） |
+| `for await` 没有任何时限，宿主不结束就永远等 | **双层 deadline（默认 90 秒）**：逐 chunk 检查 + 外层 `Promise.race`。后者必需 —— 若一个 chunk 都不吐，内层检查永远轮不到执行 |
+| 超时后还换 purpose/provider 重试 | **不重试**，那只是再等 90 秒。直接降级出结果 |
+
+**超时不等于失败，等于降级。** 到点就给你一份规则式编译的粗糙结果，同时明确告诉你发生了什么：
+
+```js
+diag.timedOut        // true = 是我们主动放弃（太慢），不是宿主出错
+diag.timeoutNote     // "模型调用超过 90 秒未完成，已放弃 LLM 链路并降级为规则式编译"
+diag.modelUnavailable// 点名是哪个模型没调用成功，而不是只说一句"已降级"
+```
+
+前端加载态**每秒自增显示已用时**，超过 60 秒提示"超过 90 秒将自动改用规则式编译"。
+
+> 这三条各有测试锁死（`tests/timeout.test.js`，9 条），并且**每条都用注入破坏验证过能被击穿** ——
+> 去掉 `Promise.race` 会让测试进程直接挂死，这本身就是"没有 deadline 就会挂住"的证据。
 
 ---
 
@@ -245,11 +281,25 @@ Agent 侧对应工具是 `prompt_template`（**不传 `template` 就会先列出
 
 ## 诚实披露
 
-- **本项目不宣称「首创交互式澄清」**。`yaoshuo530/dsh-prompt-enhancer` 已实现完整澄清链路；
-  本项目的差异点是**可编程层**（`ctx.promptCompiler` 服务 + `prompt_compile` 工具），
-  让编译能力能被其他插件与 Agent 复用，而不是只服务一个 UI 按钮。
+> 这一节会随着竞品调研不断**收紧**。凡是调研推翻了的说法，都在这里改回来，而不是悄悄删掉。
+
+- **不宣称「首创交互式澄清」**。`yaoshuo530/dsh-prompt-enhancer`（2026-08-28）已实现
+  「判断是否需要澄清 → 澄清卡片 → 结构化提问」完整链路，早于本项目。
+- **不宣称「首创可编程 prompt 服务」**。`seven282/oss-prompt-optimizer` 已有
+  `ctx.promptOptimizer` 服务 + `prompt_optimize` 工具；`SongMiao-tech/dsh-prompt-optimizer` 同样暴露服务。
+- **「五维评分」也不是独特名目**。`Y1X1n/dsh-prompt-optimizer` 自称「五维诊断」，
+  `xueccci/dsh-prompt-lab` 有评分弹窗与继续优化。
+- **本项目真正的差异点（有证据，不是修辞）**：
+  1. **评分规则式、确定性、零模型成本** —— 竞品评分依赖 LLM，每次结果漂移；本项目同一输入恒得同分
+     （`tests/scoring.test.js` 有确定性断言，`tests/eval.test.js` 有"连跑两次逐条比对"）。
+  2. **公开评测集 + 可复现数字** —— 12 条真实 draft：平均 17.2 → 81.5；负向空壳恒 0 分。
+     方法在 `evals/`，命令 `npm run eval`，任何人可复跑。
+  3. **抗刷分与证据回溯是测试锁死的** —— 空壳必须 0 分、每处扣分必须指向原文片段，
+     这两条在 `tests/` 里有断言并有注入破坏验证，不是宣传语。
 - **`elicit` 走规则实现，不接 LLM** —— 这是设计选择（更快更可预测），不是未完成。
 - **Claude Code 侧尚未实现**。跨端是方向，目前只有 DSH。
+
+> 完整横向对比（**22 个 DSH 同类 + 1 个非 DSH 参照**，star / 日期现场查询可复现）：[docs/competitor-comparison.md](./docs/competitor-comparison.md)
 
 ---
 
@@ -284,17 +334,36 @@ dsh-prompt-compiler/
 │   ├── settings.js   # 设置持久化（~/.dsh/prompt-compiler/settings.json）
 │   ├── client.js     # client 半：UI + 设置页（零构建，手写 ModuleLoader）
 │   └── sdk.js        # 自包含 defineTool
-├── tests/            # node --test：templates / builtin-templates / service / settings / index / client，97 个用例
-├── docs/             # 竞品审计、官方文档对齐、服务化先例调研
+├── tests/            # node --test：12 个测试文件、192 个用例（见下表）
+├── evals/            # 公开评测集：12 条真实 draft + 4 条负向样本，npm run eval 复跑
+├── scripts/          # verify:static / verify:e2e / verify:prompt 三层验收脚本
+├── docs/             # 竞品审计、官方文档对齐、服务化先例调研、一页版介绍页
 └── .github/workflows/  # ci.yml（Node 22/24 矩阵）、release.yml（tag 自动发布）
 ```
+
+| 测试文件 | 用例 | 锁住什么 |
+|---|---:|---|
+| `service.test.js` | 37 | LLM 流解析、provider 回退、外部端点、评分接入 |
+| `scoring.test.js` | 23 | 五维评分规则与确定性（同输入恒同分） |
+| `templates.test.js` | 17 | 模板引擎：渲染 / 校验 / 静态审计 |
+| `verify.test.js` | 17 | 三层验收脚本自身 |
+| `builtin-templates.test.js` | 15 | 三个内置模板的结构契约 |
+| `index.test.js` | 15 | 工具注册、提示词守门、HTTP 路由 |
+| `elicit-interactive.test.js` | 15 | 交互式澄清（`ctx.userQuestions`） |
+| `auto-mode.test.js` | 14 | `agent/pre-step` 自动模式（默认关，双开关） |
+| `client.test.js` | 11 | UI 结构冒烟（stub React，**测不出布局**） |
+| `settings.test.js` | 11 | 设置持久化与默认值 |
+| `timeout.test.js` | 9 | **90 秒 deadline、超时降级、模型优选** |
+| `eval.test.js` | 8 | 评测集防劣化：增益与命中率下限 |
 
 ## 开发
 
 ```bash
 npm ci         # 需 package-lock.json（CI 同款；lockfile 已入库）
 npm run check  # 语法检查
-npm test       # 97 个用例
+npm test       # 192 个用例
+npm run verify # 三层验收：static → unit → prompt → e2e
+npm run eval   # 评测集：跑出 Before/After 那组数字
 ```
 
 CI 在 Node 22.x / 24.x 上跑 `npm ci → check → test`。

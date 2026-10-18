@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>dsh-prompt-compiler · 把粗糙的 draft 编译成可执行的 prompt</title>
+<meta name="description" content="DSH 插件：诊断缺什么 → 交互式澄清 → 结构化合成。带规则式确定性五维评分与公开评测集。" />
+<style>
+  :root {
+    --fg: #1a1a1f;
+    --muted: #5f6470;
+    --line: #e3e5ec;
+    --bg: #ffffff;
+    --soft: #f6f7fb;
+    --accent: #4d6bfe;
+    --good: #0f9960;
+    --warn: #b26a00;
+    --bad: #c0392b;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e8eaf0;
+      --muted: #9aa1b0;
+      --line: #2a2d36;
+      --bg: #14161b;
+      --soft: #1b1e25;
+      --accent: #7d93ff;
+      --good: #3ddc97;
+      --warn: #ffb454;
+      --bad: #ff6b6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 56px 24px 96px; }
+  header { margin-bottom: 48px; }
+  .eyebrow {
+    font-size: 13px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; margin-bottom: 14px;
+  }
+  h1 { font-size: 36px; line-height: 1.25; margin: 0 0 18px; letter-spacing: -.02em; }
+  .lead { font-size: 18px; color: var(--muted); margin: 0 0 24px; }
+  .lead strong { color: var(--fg); }
+  .flow {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    margin: 26px 0 0; font-size: 14px;
+  }
+  .flow span.step {
+    background: var(--soft); border: 1px solid var(--line);
+    padding: 6px 12px; border-radius: 999px; color: var(--fg);
+  }
+  .flow span.arrow { color: var(--muted); }
+  h2 {
+    font-size: 22px; margin: 56px 0 18px; padding-top: 24px;
+    border-top: 1px solid var(--line); letter-spacing: -.01em;
+  }
+  h3 { font-size: 16px; margin: 28px 0 10px; }
+  p { margin: 0 0 14px; }
+  code {
+    font-family: var(--mono); font-size: 13.5px;
+    background: var(--soft); padding: 2px 6px; border-radius: 5px;
+  }
+  pre {
+    background: var(--soft); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; margin: 0 0 18px;
+  }
+  pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
+  blockquote {
+    margin: 0 0 18px; padding: 12px 16px; border-left: 3px solid var(--accent);
+    background: var(--soft); border-radius: 0 8px 8px 0; color: var(--fg);
+  }
+  blockquote p:last-child { margin-bottom: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 18px; font-size: 14.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { font-family: var(--mono); text-align: right; }
+  th.num { text-align: right; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin: 0 0 20px; }
+  .card { background: var(--soft); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card .big { font-size: 30px; font-weight: 700; font-family: var(--mono); letter-spacing: -.02em; }
+  .card .lbl { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .card .sub { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+  .good { color: var(--good); }
+  .warn { color: var(--warn); }
+  .bad { color: var(--bad); }
+  .note {
+    font-size: 14px; color: var(--muted); background: var(--soft);
+    border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 0 0 18px;
+  }
+  .note strong { color: var(--fg); }
+  ul { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 7px; }
+  footer {
+    margin-top: 64px; padding-top: 22px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13.5px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .tag {
+    display: inline-block; font-size: 12px; font-family: var(--mono);
+    border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; color: var(--muted);
+  }
+  /* 0.4.1 新增：事故时间线 */
+  .timeline { margin: 0 0 20px; padding: 0; list-style: none; }
+  .timeline li {
+    position: relative; padding: 0 0 18px 26px; margin: 0;
+    border-left: 2px solid var(--line);
+  }
+  .timeline li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .timeline li::before {
+    content: ""; position: absolute; left: -7px; top: 4px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--bg); border: 2px solid var(--accent);
+  }
+  .timeline li.bad::before { border-color: var(--bad); }
+  .timeline li.good::before { border-color: var(--good); background: var(--good); }
+  .timeline .when {
+    font-size: 12px; font-family: var(--mono); color: var(--muted);
+    text-transform: uppercase; letter-spacing: .05em;
+  }
+  .timeline .what { font-weight: 600; display: block; margin: 2px 0 4px; }
+  .kv { font-family: var(--mono); font-size: 13px; }
+  .kv .k { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">DSH Plugin · Prompt Compiler</div>
+  <h1>把粗糙的 draft，编译成精确、完整、可执行的 prompt</h1>
+  <p class="lead">
+    随手写的「帮我写个爬虫」，把大量决策甩给了模型。这个插件先<strong>诊断缺什么</strong>，
+    再<strong>问你几个关键问题</strong>，最后合成一份带验收标准的结构化 prompt。
+    它同时是一个<strong>可编程的编译层</strong>，别的插件和 Agent 可以直接调用。
+  </p>
+  <div class="flow">
+    <span class="step">① 诊断 analyze</span><span class="arrow">→</span>
+    <span class="step">② 澄清 elicit</span><span class="arrow">→</span>
+    <span class="step">③ 合成 compile</span><span class="arrow">→</span>
+    <span class="step">④ 模板 render</span>
+  </div>
+</header>
+
+<h2>最新一版只修一件事：<span class="good">不让你干等</span></h2>
+
+<p>
+  <strong>慢和死看起来一模一样。</strong>界面纹丝不动，你不知道它是在跑还是已经挂了 ——
+  这是 0.4.1 唯一的主题。
+</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="big bad">215.7<span style="font-size:16px">s</span></div>
+    <div class="lbl">修复前：一次编译</div>
+    <div class="sub">真实宿主实测，界面全程无反馈</div>
+  </div>
+  <div class="card">
+    <div class="big good">5.8<span style="font-size:16px">s</span></div>
+    <div class="lbl">同一条 draft，换个模型</div>
+    <div class="sub">慢 <strong>37 倍</strong>，差在选错了档</div>
+  </div>
+  <div class="card">
+    <div class="big good">90<span style="font-size:16px">s</span></div>
+    <div class="lbl">现在的硬性上限</div>
+    <div class="sub">到点降级出结果，不挂死</div>
+  </div>
+  <div class="card">
+    <div class="big">1<span style="font-size:16px">s</span></div>
+    <div class="lbl">加载态刷新粒度</div>
+    <div class="sub">每秒显示已用时，能区分"在跑"和"死了"</div>
+  </div>
+</div>
+
+<h3>三个原因叠在一起</h3>
+
+<ol class="timeline">
+  <li class="bad">
+    <span class="when">原因 ①</span>
+    <span class="what">模型选择盲取列表第一个</span>
+    旧代码用 <code>listModels(provider)[0]</code>，拿到的是 <code>hy4-preview-f</code> ——
+    一次编译吐 <strong>2250~2632 个 chunk</strong>（大量 <code>reasoning-delta</code>），
+    而会话在跑的 <code>hy3-x</code> 只要 <strong>28 个</strong>。
+  </li>
+  <li class="bad">
+    <span class="when">原因 ②</span>
+    <span class="what">for await 没有任何时限</span>
+    宿主不结束就永远等。注意这里要<strong>两层</strong>：逐 chunk 检查只在"流吐下一个 chunk"时才有机会跑，
+    若宿主一个 chunk 都不吐，内层检查永远轮不到执行 —— 所以外层还得套 <code>Promise.race</code>。
+  </li>
+  <li class="bad">
+    <span class="when">原因 ③</span>
+    <span class="what">超时后还换 purpose / provider 重试</span>
+    那只会<strong>再等一个 90 秒</strong>，没有任何收益 —— 慢是慢在同一个上游本身。
+  </li>
+  <li class="good">
+    <span class="when">现在</span>
+    <span class="what">会话当前模型 → provider 优选档 → 列表首个</span>
+    且前两级都要在 <code>listModels</code> 清单里确认归属，<strong>不靠模型名猜</strong> ——
+    否则会把 A 家的档塞给 B 家。
+  </li>
+</ol>
+
+<div class="note">
+  <strong>超时不等于失败，等于降级。</strong>
+  到点就给你一份规则式编译的粗糙结果，同时把发生了什么明确写进诊断：
+  <div class="kv" style="margin-top:10px">
+    <div><span class="k">diag.timedOut</span> = true <span class="k">// 我们主动放弃（太慢），不是宿主出错</span></div>
+    <div><span class="k">diag.timeoutNote</span> = "模型调用超过 90 秒未完成，已放弃 LLM 链路并降级为规则式编译"</div>
+    <div><span class="k">diag.modelUnavailable</span> = "…hy3-x 未能成功调用…" <span class="k">// 点名是哪个模型</span></div>
+  </div>
+</div>
+
+<blockquote>
+  <p>
+    <strong>这三条各有 9 条测试锁死</strong>（<code>tests/timeout.test.js</code>），
+    而且每条都用<strong>注入破坏</strong>验证过能被击穿：把 <code>Promise.race</code> 拿掉，
+    测试进程会直接挂死 —— 这本身就是"没有 deadline 就会挂住"最直接的证据。
+  </p>
+</blockquote>
+
+<div class="note">
+  <strong>诚实记录一条取不到的值：</strong>
+  宿主 <code>ctx.llm</code> 实际只有 <code>ctx / name / typertRemote / adapters / directory / discoveries</code>
+  这些键（已用实读 <code>app.asar</code> + 运行时 <code>diag.llmKeys</code> 双向确认），
+  <strong>不暴露"当前会话模型"</strong>。所以"优先用会话当前模型"这条在本机当前版本上取不到值，
+  会自动退到 provider 优选档 <code>hy3-x</code>（实测有效）。等宿主提供该字段时无需改代码即可生效。
+</div>
+
+<h2>先看数字：同一把尺子，量 Before / After</h2>
+
+<p>
+  下面是 12 条真实形态的粗糙 draft（爬虫、落地页、代码审查、会议纪要、SQL 优化、简历……），
+  每条补上澄清信息前后的得分对比。评分器是<strong>规则式、零模型、确定性</strong>的，任何人可复跑。
+</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="big">17.2</div>
+    <div class="lbl">原始 draft 平均分</div>
+    <div class="sub">区间 12–38（越低越粗糙）</div>
+  </div>
+  <div class="card">
+    <div class="big good">81.5</div>
+    <div class="lbl">补全信息后平均分</div>
+    <div class="sub">平均提升 <strong>+64.3</strong></div>
+  </div>
+  <div class="card">
+    <div class="big good">100%</div>
+    <div class="lbl">期望改进维度命中率</div>
+    <div class="sub">38 个期望提升项全部兑现</div>
+  </div>
+  <div class="card">
+    <div class="big good">0</div>
+    <div class="lbl">空壳样本得分</div>
+    <div class="sub">4 个负向样本全部 0 分</div>
+  </div>
+</div>
+
+<div class="note">
+  <strong>这些数字怎么来的，你可以自己验：</strong>
+  仓库里 <code>evals/drafts.json</code> 是样本数据，<code>npm run eval</code> 一键复跑出上面这张表。
+  评分逻辑在 <code>lib/scoring.js</code>，零依赖、不调用任何模型 ——
+  <strong>同一输入永远得同一个分</strong>，所以这些数字不会像 LLM 评分那样今天一个样明天一个样。
+</div>
+
+<h3>凭什么说这个评分不是"自说自话"</h3>
+<table>
+  <thead><tr><th>防线</th><th>说明</th><th>怎么验证</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>抗刷分</td>
+      <td>只写四个段名（<code>## Task</code> / <code>## Constraints</code>…）的空壳必须 0 分，堆 20 倍长度也不得多拿分</td>
+      <td><code>tests/scoring.test.js</code></td>
+    </tr>
+    <tr>
+      <td>逐维正对照</td>
+      <td>每一条打分规则都有"有 / 无"两版输入，断言分数必须变化 —— 防止规则写了却没生效</td>
+      <td>同上</td>
+    </tr>
+    <tr>
+      <td>防劣化</td>
+      <td>评测集自己也有测试：真实 draft 不得被判 0 分、平均增益不得低于 +40、命中率不得低于 90%</td>
+      <td><code>tests/eval.test.js</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<blockquote>
+  <p>
+    <strong>三条防线都用"注入破坏"验过</strong>：把代码故意改坏后对应测试会变红，还原后变绿。
+    一个永远打印 ✔ 的检查器比没有检查器更危险，所以这一步不做不行。
+  </p>
+</blockquote>
+
+<h2>它到底解决什么问题</h2>
+
+<p>代码里的注释写得很诚实，这里照抄：</p>
+
+<pre><code>// 简化的分句逻辑（真实实现还处理域名/文件名/版本号里的句点）
+function splitSentences(text) {
+  return String(text).split(/(?&lt;=[。！？；])\s*|\n+/)
+}</code></pre>
+
+<p><strong>但真实遇到的 bug 是这个：</strong>按 <code>.</code> 无条件切句，会把
+<code>news.example.com</code> 切成「news」「example」「com 首页新闻标题」——
+证据引用变成半截，用户根本没法复核扣分理由是什么。</p>
+
+<blockquote>
+  <p>
+    这个问题不是我"想到"的，是<strong>写评测集的时候当场抓出来的</strong>。
+    12 条真实 draft 里，「做个落地页」「优化一下」「帮我看看」全都判了 0 分 ——
+    而评分的落点正是这类粗糙 draft，判 0 等于告诉用户「你什么都没说」。
+    根因是动作动词词表只收了技术词汇（抓取/生成/修复），漏了中文最高频的「做/写/改/看看」。
+  </p>
+</blockquote>
+
+<p>类似这样被评测集抓出来的真 bug，都写在
+<code>NEXT-STEPS.md</code> 的 F3 条目里，附带修法与回归测试。</p>
+
+<h3>还有一个"自己给自己扣分"的 bug</h3>
+
+<p>
+  规则式编译路径（不接 LLM 时的兜底）曾经把一条 prompt <strong>34 分改成 32 分</strong> ——
+  越编译越差。查下来很荒诞：是它自己写的话被自己扣了分。
+</p>
+
+<pre><code>## Constraints
+- 明确、可执行、无歧义                    ← 听着像约束，其实什么都没约束
+
+## Assumptions
+- 假设无额外边界，模型在合理范围内自行决策   ← "合理"是模糊词，歧义维如实扣 2 分</code></pre>
+
+<p>
+  修法是<strong>让缺口看起来就是缺口</strong>：没有约束就写「未提供约束，请补充：…」，
+  而不是塞一句正确的废话。修完后 12 条样本的规则式编译增益最小是 <strong>+20</strong>，
+  没有一条为负。这条现在是测试底线（底线⑤ / ⑤b），回滚代码会立刻变红。
+</p>
+
+<h2>两条互补的编译路径</h2>
+
+<table>
+  <thead><tr><th></th><th><code>compile</code></th><th><code>render</code></th></tr></thead>
+  <tbody>
+    <tr><td>做什么</td><td>LLM 把草稿改写成 prompt</td><td>用模板确定性渲染 prompt</td></tr>
+    <tr><td>适合</td><td>形态未知、需要推理的草稿</td><td>"按固定维度评一遍"这类评审</td></tr>
+    <tr><td>结果</td><td>每次可能不同</td><td>完全可复现</td></tr>
+    <tr><td>成本</td><td>一次模型调用</td><td>零模型调用</td></tr>
+  </tbody>
+</table>
+
+<h2>安装</h2>
+
+<pre><code># 从 npm 安装（推荐）
+dsh plugin --profile desktop add npm:dsh-prompt-compiler
+
+# 或从 GitHub 安装
+dsh plugin --profile desktop add git+https://github.com/Jav1es/dsh-prompt-compiler.git</code></pre>
+
+<p>装完后 composer 工具栏会出现「✨ 编译」入口，DSH 设置页会出现 Prompt Compiler 面板。</p>
+
+<h2>怎么用</h2>
+
+<h3>给人用</h3>
+<p>在输入框写好粗糙的草稿 → 点「✨ 编译」→ 看到诊断与澄清表单 → 采用并回填。编译可随时取消，草稿一个字都不丢。</p>
+
+<h3>给插件与 Agent 用</h3>
+<pre><code>// 服务：任何 inject ['promptCompiler'] 的插件都能用
+const { compiled, score5d, scoreDelta } = await ctx.promptCompiler.compile(draft)
+
+// 工具：模型可直接调用
+prompt_compile({ draft: "帮我写个爬虫" })
+prompt_template({ template: "portfolio-review", variables: { siteUrl, targetRoles } })</code></pre>
+
+<h2>诚实披露</h2>
+
+<p>这一节会随着竞品调研不断<strong>收紧</strong>。凡是调研推翻了的说法，都在这里改回来，而不是悄悄删掉。</p>
+
+<ul>
+  <li><strong>不宣称「首创交互式澄清」。</strong>
+    <code>yaoshuo530/dsh-prompt-enhancer</code>（2026-08-28）已实现「判断是否需要澄清 → 澄清卡片 → 结构化提问」完整链路，早于本项目。</li>
+  <li><strong>不宣称「首创可编程 prompt 服务」。</strong>
+    <code>seven282/oss-prompt-optimizer</code> 已有 <code>ctx.promptOptimizer</code> 服务 + <code>prompt_optimize</code> 工具；<code>SongMiao-tech</code> 同样暴露服务。</li>
+  <li><strong>「五维评分」也不是独特名目。</strong>
+    <code>Y1X1n</code> 自称「五维诊断」，<code>xueccci</code> 有评分弹窗与继续优化。</li>
+  <li><strong>Claude Code 侧尚未实现。</strong>跨端是方向，目前只有 DSH。</li>
+</ul>
+
+<p>完整的 23 个竞品横向对比（star / 创建日期 / 最后推送时间 / 能力分类，全部现场查询可复现）见仓库
+<code>docs/competitor-comparison.md</code>。</p>
+
+<h2>本项目真正的差异点</h2>
+
+<p>不是"我做得更多"，而是"我这几个数字你能自己验"：</p>
+
+<ol>
+  <li><strong>评分规则式、确定性、零模型成本。</strong>竞品评分依赖 LLM，每次结果漂移；本项目同一输入恒得同分，可以进 CI。</li>
+  <li><strong>公开评测集 + 可复现数字。</strong>方法和数据都在仓库里，一条命令复跑，不是一张截图说了算。</li>
+  <li><strong>抗刷分与证据回溯是测试锁死的。</strong>空壳必须 0 分、每处扣分必须指向原文片段 —— 这两条在测试里有断言，不是宣传语。</li>
+</ol>
+
+<h2>开发</h2>
+
+<pre><code>npm run verify   # ① 静态自检 ② 单测 ③ 提示词守门 ④ 宿主侧端到端
+npm run eval     # 评测集：跑出上面那组 Before/After 数字
+npm test         # 192 个用例</code></pre>
+
+<p><code>verify</code> 分四层，各自回答不同问题：仓库形态自洽吗 / 每个模块对不对 /
+装进宿主后服务与工具真的能用吗。其中「提示词守门」会双向校验 ——
+系统提示里提到的工具必须已注册，已注册的给模型用的工具必须被提示过。
+这类错单测、静态检查、e2e 主体都看不出来（服务能跑、路由能通，只是模型永远用不上那个工具），
+所以必须是单独一层把两边拉在一起比对。</p>
+
+<table>
+  <thead><tr><th>测试文件</th><th class="num">用例</th><th>锁住什么</th></tr></thead>
+  <tbody>
+    <tr><td><code>service.test.js</code></td><td class="num">37</td><td>LLM 流解析、provider 回退、外部端点、评分接入</td></tr>
+    <tr><td><code>scoring.test.js</code></td><td class="num">23</td><td>五维评分规则与确定性（同输入恒同分）</td></tr>
+    <tr><td><code>templates.test.js</code></td><td class="num">17</td><td>模板引擎：渲染 / 校验 / 静态审计</td></tr>
+    <tr><td><code>verify.test.js</code></td><td class="num">17</td><td>三层验收脚本自身</td></tr>
+    <tr><td><code>builtin-templates.test.js</code></td><td class="num">15</td><td>三个内置模板的结构契约</td></tr>
+    <tr><td><code>index.test.js</code></td><td class="num">15</td><td>工具注册、提示词守门、HTTP 路由</td></tr>
+    <tr><td><code>elicit-interactive.test.js</code></td><td class="num">15</td><td>交互式澄清（<code>ctx.userQuestions</code>）</td></tr>
+    <tr><td><code>auto-mode.test.js</code></td><td class="num">14</td><td><code>agent/pre-step</code> 自动模式（默认关，双开关）</td></tr>
+    <tr><td><code>client.test.js</code></td><td class="num">11</td><td>UI 结构冒烟（stub React，<strong>测不出布局</strong>）</td></tr>
+    <tr><td><code>settings.test.js</code></td><td class="num">11</td><td>设置持久化与默认值</td></tr>
+    <tr><td><code>timeout.test.js</code></td><td class="num">9</td><td><strong>90 秒 deadline、超时降级、模型优选</strong></td></tr>
+    <tr><td><code>eval.test.js</code></td><td class="num">8</td><td>评测集防劣化：增益与命中率下限</td></tr>
+  </tbody>
+</table>
+
+<footer>
+  <p>
+    <span class="tag">MIT</span>
+    <span class="tag">v0.4.1</span>
+    <span class="tag">Node ^22.19.0 || &gt;=24</span>
+    <span class="tag">DSH ^0.2.0-rc.2</span>
+    <span class="tag">192 tests passing</span>
+  </p>
+  <p>评测数字来自 2026-10-17 的实测；「编译卡住」事故数据来自 2026-10-19 的真实宿主实测。
+     所有数据与复跑方法均在仓库内。</p>
+</footer>
+
+</div>
+</body>
+</html>

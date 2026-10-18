@@ -1,0 +1,160 @@
+{
+  "$comment": "Prompt Compiler 评测集（F3）。每条 = 一个真实形态的粗糙 draft + 期望改进点 + 期望被诊断出的缺失要素。",
+  "schemaVersion": 1,
+  "updated": "2026-10-17",
+  "notes": [
+    "draft 全部取自真实使用形态（一句话需求、口语化、带口语助词），不是为评分器量身定制的样本。",
+    "expect.missing 写的是**期望被诊断出**的要素类别，用 scoring 的维度 id 表达，不绑定具体文案。",
+    "expect.gainFromAnswers: true 表示补上 expect.answers 后分数必须上升 —— 这是「澄清真的有价值」的检验。",
+    "不要为了分数好看改 draft：样本一旦迎合评分器，评测集就失去意义。"
+  ],
+  "cases": [
+    {
+      "id": "crawler-vague",
+      "tag": "后端/自动化",
+      "draft": "帮我写个爬虫",
+      "expectImprove": ["goal", "constraint", "acceptance"],
+      "answers": {
+        "goal": "抓取新闻站点首页的标题和链接",
+        "constraint": "只用 Python 标准库 + requests，不引入浏览器内核",
+        "format": "CSV，两列：title,url",
+        "acceptance": "连续跑 3 天不报错，每天至少 20 条且 title/url 都非空"
+      }
+    },
+    {
+      "id": "crawler-mid",
+      "tag": "后端/自动化",
+      "draft": "目标：帮我写个爬虫抓新闻，输出 JSON。",
+      "expectImprove": ["context", "constraint", "acceptance"],
+      "answers": {
+        "goal": "抓取 news.example.com 首页所有新闻标题与链接",
+        "context": "每日早八点给运营同学做速览，读者不写代码",
+        "acceptance": "连续跑 3 天不报错，每天至少 20 条且 title/url 都非空"
+      }
+    },
+    {
+      "id": "landing-page",
+      "tag": "前端",
+      "draft": "做个落地页，好看点，参考苹果那种",
+      "expectImprove": ["goal", "context", "constraint", "acceptance"],
+      "answers": {
+        "goal": "为一款笔记类 SaaS 做产品落地页，目标是引导注册",
+        "context": "目标用户是 25-35 岁的知识工作者，主要在手机上打开",
+        "constraint": "单文件 HTML，不引入构建工具，首屏 3 秒内可交互",
+        "acceptance": "Lighthouse 移动端性能 ≥ 90，注册按钮在首屏可见"
+      }
+    },
+    {
+      "id": "code-review",
+      "tag": "工程实践",
+      "draft": "帮我 review 一下这段代码",
+      "expectImprove": ["goal", "context", "acceptance"],
+      "answers": {
+        "goal": "审查一个 PR 的 diff，找出会导致线上故障的缺陷",
+        "context": "TypeScript + Node 22，改动集中在支付回调的幂等处理",
+        "constraint": "只报能定位到具体行的问题，不评论代码风格",
+        "acceptance": "每条问题给出文件:行号 + 触发条件 + 修复建议"
+      }
+    },
+    {
+      "id": "meeting-summary",
+      "tag": "办公",
+      "draft": "帮我把这个会议纪要总结一下",
+      "expectImprove": ["goal", "constraint", "acceptance"],
+      "answers": {
+        "goal": "把 40 分钟会议转写稿压缩成一页决策纪要",
+        "format": "三段：已决定事项 / 待办（含负责人与截止日）/ 未决问题",
+        "acceptance": "每条待办必须能对应到转写稿中的原话，不得编造负责人"
+      }
+    },
+    {
+      "id": "sql-opt",
+      "tag": "数据",
+      "draft": "这个 SQL 太慢了，优化一下",
+      "expectImprove": ["context", "constraint", "acceptance"],
+      "answers": {
+        "context": "PostgreSQL 16，表 2000 万行，已建 (user_id, created_at) 联合索引",
+        "goal": "把查询从 30 秒压到 2 秒以内",
+        "constraint": "不允许改表结构、不允许加冗余字段（线上表有写入压力）",
+        "acceptance": "EXPLAIN ANALYZE 显示不再全表扫描，总耗时 ≤ 2s"
+      }
+    },
+    {
+      "id": "ppt-outline",
+      "tag": "办公",
+      "draft": "帮我写个 PPT 大纲",
+      "expectImprove": ["goal", "context", "acceptance"],
+      "answers": {
+        "goal": "给公司季度全员会做 10 页的技术团队汇报大纲",
+        "context": "听众 200 人，多数非技术背景，汇报时长 10 分钟",
+        "acceptance": "每页一句话主张 + 3 个支撑点，不出现内部代号"
+      }
+    },
+    {
+      "id": "unit-test",
+      "tag": "工程实践",
+      "draft": "给这个函数写点单元测试",
+      "expectImprove": ["goal", "context", "acceptance"],
+      "answers": {
+        "context": "函数 parseDuration(str) 把 '1h30m' 解析成秒数，现有实现对负数会抛错",
+        "goal": "补齐边界测试，覆盖空串、纯数字、负数、非法单位",
+        "acceptance": "每个新增用例在修复前必须失败（能真正抓 bug），覆盖率目标 ≥ 90%"
+      }
+    },
+    {
+      "id": "translation",
+      "tag": "内容",
+      "draft": "把这段英文翻译成中文",
+      "expectImprove": ["context", "constraint", "acceptance"],
+      "answers": {
+        "context": "这是开源项目的 README，面向中文开发者",
+        "constraint": "代码块与命令原样保留不翻译；术语按社区通行译法（如 pull request 译为 PR）",
+        "acceptance": "中文可读、不出现机翻腔；原文的 Markdown 结构完整保留"
+      }
+    },
+    {
+      "id": "bug-report",
+      "tag": "工程实践",
+      "draft": "程序报错了，帮我看看",
+      "expectImprove": ["context", "goal", "acceptance"],
+      "answers": {
+        "context": "Node 24，报错 TypeError: Cannot read properties of undefined (reading 'map')，发生在 SSR 首屏渲染",
+        "goal": "定位根因并给出最小修复补丁",
+        "constraint": "不要用可选链吞掉问题，要找到为什么是 undefined",
+        "acceptance": "给出复现步骤 + 根因说明 + 补丁 diff，并说明为何不会影响其它页面"
+      }
+    },
+    {
+      "id": "shell-command",
+      "tag": "后端/自动化",
+      "draft": "写个命令把日志里报错的行找出来",
+      "expectImprove": ["constraint", "acceptance", "context"],
+      "answers": {
+        "context": "日志文件 2GB，每天轮转，格式是 '2026-10-17T08:00:00Z ERROR ...'",
+        "constraint": "不能把整个文件读进内存；只输出出现次数最多的 10 种错误",
+        "acceptance": "给出可直接粘贴的命令 + 在 2GB 样本上的耗时说明"
+      }
+    },
+    {
+      "id": "resume-polish",
+      "tag": "办公",
+      "draft": "帮我优化下简历",
+      "expectImprove": ["goal", "context", "constraint", "acceptance"],
+      "answers": {
+        "goal": "把简历投给一线大厂的后端社招岗位（3 年经验）",
+        "context": "我是做 Java 微服务的，有一年带三人小组的经验",
+        "constraint": "每段经历用 STAR 写，量化结果，总长度不超过两页",
+        "acceptance": "每段经历都含可验证的数字指标；去掉'精通'这类无证据形容词"
+      }
+    }
+  ],
+  "$negativeCases": {
+    "$comment": "负向样本：评分器必须给这些 0 分，否则空壳可以刷分。",
+    "cases": [
+      { "id": "empty", "draft": "", "expectTotal": 0 },
+      { "id": "whitespace", "draft": "   \n\t  \n", "expectTotal": 0 },
+      { "id": "heading-shell", "draft": "## Task\n## Constraints\n## Output Format\n## Acceptance Criteria", "expectTotal": 0 },
+      { "id": "heading-shell-md", "draft": "# Goal\n# Context\n# Constraints\n# Acceptance", "expectTotal": 0 }
+    ]
+  }
+}

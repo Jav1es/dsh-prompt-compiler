@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-compiler",
-  "version": "0.3.1",
+  "version": "0.4.1",
   "description": "Prompt Compiler 插件：把粗糙 draft 编译成结构化 prompt（DSH 插件 host 半，B 组最小可运行版）。",
   "keywords": [
     "deepseek-harness",
@@ -19,9 +19,17 @@
     "url": "https://github.com/Jav1es/dsh-prompt-compiler/issues"
   },
   "scripts": {
-    "check": "node --check lib/index.js && node --check lib/sdk.js && node --check lib/service.js && node --check lib/settings.js && node --check lib/templates.js && node --check lib/builtin-templates.js && node --check lib/client.js",
+    "check": "node --check lib/index.js && node --check lib/sdk.js && node --check lib/service.js && node --check lib/settings.js && node --check lib/templates.js && node --check lib/builtin-templates.js && node --check lib/scoring.js && node --check lib/auto-mode.js && node --check lib/client.js && node --check evals/run.cjs && node --check scripts/verify-static.cjs && node --check scripts/verify-e2e.cjs && node --check scripts/verify-prompt.cjs",
     "test": "node --test \"tests/**/*.test.js\"",
-    "prepare": "node -e \"1\""
+    "eval": "node evals/run.cjs",
+    "verify:static": "node scripts/verify-static.cjs",
+    "verify:unit": "npm run check && npm test",
+    "verify:e2e": "node scripts/verify-e2e.cjs",
+    "verify": "npm run verify:static && npm run verify:unit && npm run verify:prompt && npm run verify:e2e",
+    "verify:all": "npm run verify && npm run eval",
+    "prepublishOnly": "npm run verify",
+    "prepare": "node -e \"1\"",
+    "verify:prompt": "node scripts/verify-prompt.cjs"
   },
   "main": "lib/index.js",
   "types": "lib/types.d.ts",
@@ -32,6 +40,8 @@
     "./service": "./lib/service.js",
     "./settings": "./lib/settings.js",
     "./templates": "./lib/templates.js",
+    "./scoring": "./lib/scoring.js",
+    "./auto-mode": "./lib/auto-mode.js",
     "./package.json": "./package.json"
   },
   "files": [

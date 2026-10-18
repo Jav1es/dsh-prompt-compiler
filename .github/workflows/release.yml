@@ -8,7 +8,9 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    # 同 ci.yml：固定 LTS，不用 `ubuntu-latest`（2026-10-19 起会漂移到 26.04，
+    # 见 actions/runner-images#14748）。发布环境尤其不该有"环境在悄悄变"这种变量。
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write # npm provenance 需要

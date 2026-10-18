@@ -8,7 +8,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # 固定到具体 LTS 版本，**不用 `ubuntu-latest`**。
+    #
+    # 原因：GitHub 从 2026-10-19 起把 `ubuntu-latest` 滚动迁移到 Ubuntu 26.04
+    # （actions/runner-images#14748，11-19 完成）。迁移期间同一个 label 会在
+    # 24.04 / 26.04 之间漂移 —— 对 CI 来说等于"今天绿的明天可能红，而且查不出原因"。
+    # 本项目已经吃过一次"本地 Node 24 全绿、CI Node 22 全红"的亏（见 CHANGELOG 0.4.1），
+    # 不想再叠一个不确定的环境变量。
+    # ⇒ 想升级时改这一行，是一次显式、可 review 的决定。
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         node-version: [22.x, 24.x]

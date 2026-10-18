@@ -278,13 +278,36 @@ test('verify:e2e 正对照：当前仓库跑 e2e 必须通过（含明确标注�
 // 做法：把 lib/index.js 复制到临时目录并注入两个错误，跑 e2e 断言变红。
 // 不直接改真实文件（并发/中断下会把仓库改坏）。
 
+/**
+ * 手写递归复制，**不用 `fs.cpSync`**。
+ *
+ * 🔴 CI 事故（2026-10-19，Node 22 矩阵）：`fs.cpSync(..., {recursive:true})` 在
+ *   Node **22.23.3 / Windows** 上复制本仓库的 `lib/` 时会让进程直接崩溃：
+ *     exit=-1073740791（0xC0000409 STACK_BUFFER_OVERRUN），没有任何 stdout/stderr。
+ *   表现极具迷惑性：单条测试跑「提示词守门」时整组无输出失败，而 `verify-e2e.cjs`
+ *   单独跑却是好的 —— 因为崩溃发生在**准备阶段**，还没到断言。
+ *   Node 24 不复现，所以本地全绿、CI 全红。
+ *   ⇒ 换成显式 readdir + copyFileSync 递归复制，两个版本都稳。
+ */
+function copyTree(src, dst) {
+  const st = fs.statSync(src)
+  if (st.isDirectory()) {
+    fs.mkdirSync(dst, { recursive: true })
+    for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+      copyTree(path.join(src, e.name), path.join(dst, e.name))
+    }
+  } else if (st.isFile()) {
+    fs.copyFileSync(src, dst)
+  }
+}
+
 function runE2EWithPatchedIndex(mutate) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-e2e-'))
   try {
     const repoRoot = path.resolve(__dirname, '..')
-    // 复制 lib/ 与必要文件
+    // 复制 lib/ 与必要文件（不用 cpSync，见上面的 CI 事故说明）
     for (const rel of ['lib', 'scripts', 'package.json', 'cordis.patch.yml']) {
-      fs.cpSync(path.join(repoRoot, rel), path.join(dir, rel), { recursive: true })
+      copyTree(path.join(repoRoot, rel), path.join(dir, rel))
     }
     const indexPath = path.join(dir, 'lib', 'index.js')
     fs.writeFileSync(indexPath, mutate(fs.readFileSync(indexPath, 'utf8')))
@@ -292,7 +315,15 @@ function runE2EWithPatchedIndex(mutate) {
       encoding: 'utf8',
       env: { ...process.env, PC_E2E_URL: '' },
     })
-    return JSON.parse(r.stdout || '{"results":[]}')
+    // 子进程若崩溃，stdout 会是空串。这里给出**可诊断**的报错，而不是让
+    // JSON.parse 抛一个看不懂的 "Unexpected end of JSON input"。
+    if (!String(r.stdout || '').trim()) {
+      throw new Error(
+        `verify-e2e 子进程没有输出（exit=${r.status}, signal=${r.signal}）` +
+          ` stderr=${String(r.stderr || '').slice(0, 400)}`
+      )
+    }
+    return JSON.parse(r.stdout)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

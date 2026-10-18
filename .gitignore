@@ -17,3 +17,6 @@ Thumbs.db
 
 # 评测运行产物（每次 `npm run eval` 重新生成，不入库）
 evals/last-report.json
+
+# 提交信息临时文件
+_msg.txt

@@ -18,15 +18,34 @@ const { createPromptCompiler } = require('../lib/service.js')
 function makeLlm(opts) {
   const o = opts || {}
   const calls = []
+  // 「挂住」的释放钩子：测试结束时统一放行，避免留下永不 settle 的 Promise。
+  //
+  // 🔴 CI 教训（2026-10-19，Node 22 矩阵）：原来这里写的是
+  //   `await new Promise(() => {})` —— 一个**永远不会 resolve** 的 Promise。
+  //   Node 24 容忍它（测试照常通过），但 Node 22 的 test runner 在事件循环排空、
+  //   仍有 pending promise 时会判整组失败：
+  //     "Promise resolution is still pending but the event loop has already resolved"
+  //   于是 8 条测试在 CI 全红、本地全绿 —— 典型的「本机能过、CI 过不了」。
+  //   ⇒ 改成**可释放的挂起**：行为等价（同样不吐 chunk、不结束），但测试收尾时能放行，
+  //     不在事件循环里留悬空 Promise。两个 Node 版本都能过。
+  const releasers = []
+  function releaseAll() {
+    while (releasers.length) {
+      try { releasers.pop()() } catch (e) { /* 忽略 */ }
+    }
+  }
   return {
     calls,
+    releaseAll,
     listProviders: () => (o.providers || ['workbuddy']).map(id => ({ id })),
     listModels: async p => (o.models && o.models[p]) || [{ id: 'hy3-x' }],
     stream: async req => {
       calls.push({ provider: req.provider, model: req.model, purpose: req.purpose })
       if (o.hang) {
-        // 永不产出、永不结束：模拟宿主连接挂住
-        return (async function* () { await new Promise(() => {}) })()
+        // 不产出、不结束：模拟宿主连接挂住。挂起可被 releaseAll() 放行。
+        return (async function* () {
+          await new Promise(resolve => { releasers.push(resolve) })
+        })()
       }
       return (async function* () {
         if (o.failWith) {
@@ -60,13 +79,16 @@ test('修复①b：读不到会话模型时，用 provider 优选档而不是列
   assert.equal(used, 'hy3-x', `读不到会话模型时应退回优选档 hy3-x，实际 ${used}`)
 })
 
-test('修复②：宿主永不结束的流必须在 deadline 内被放弃，并降级出结果', async () => {
+test('修复②：宿主永不结束的流必须在 deadline 内被放弃，并降级出结果', async t => {
   const llm = makeLlm({ hang: true })
+  // 收尾时放行挂起的流：否则 Node 22 的 test runner 会因"仍有 pending promise"
+  // 判整组失败（本地 Node 24 看不出来）。用 t.after 保证断言失败时也会执行。
+  t.after(() => llm.releaseAll())
   const pc = createPromptCompiler({ llm })
   pc.setDeadlineMs(600) // 测试用短时限
-  const t = Date.now()
+  const t0 = Date.now()
   const r = await pc.compile('帮我写个爬虫')
-  const ms = Date.now() - t
+  const ms = Date.now() - t0
 
   assert.ok(ms < 5000, `必须在 deadline 附近返回，实际 ${ms}ms`)
   assert.equal(r.diag && r.diag.timedOut, true, 'diag.timedOut 必须为 true')
@@ -77,13 +99,14 @@ test('修复②：宿主永不结束的流必须在 deadline 内被放弃，并�
   assert.match(String(r.diag.timeoutNote), /降级/, 'timeoutNote 必须说明已降级')
 })
 
-test('修复②b：超时后不得再用另一个 purpose/provider 继续等（否则等于等 2-3 倍）', async () => {
+test('修复②b：超时后不得再用另一个 purpose/provider 继续等（否则等于等 2-3 倍）', async t => {
   const llm = makeLlm({ hang: true })
+  t.after(() => llm.releaseAll())
   const pc = createPromptCompiler({ llm })
   pc.setDeadlineMs(400)
-  const t = Date.now()
+  const t0 = Date.now()
   await pc.compile('帮我写个爬虫')
-  const ms = Date.now() - t
+  const ms = Date.now() - t0
   // 若超时后仍换 purpose 重试，耗时会翻倍（>800ms）。这里留足余量但仍能区分。
   assert.ok(ms < 1200, `超时后应立即放弃 LLM 链路，实际 ${ms}ms`)
   assert.equal(llm.calls.length, 1, `超时后不应再发起调用，实际发了 ${llm.calls.length} 次`)

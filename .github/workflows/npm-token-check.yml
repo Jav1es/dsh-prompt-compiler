@@ -28,6 +28,11 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: 用 NPM_TOKEN 认证
+        # 必须显式声明 env —— 不写的话 shell 里读到的 NODE_AUTH_TOKEN
+        # 不是这个 secret（2026-10-23 实测读到 23 字符的掩码残留，
+        # 而 secret 实际是 40 字符的正确 token，排查花了一轮）。
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
             echo "::error::secrets.NPM_TOKEN 为空 —— 未配置或已被删除"
@@ -35,7 +40,7 @@ jobs:
           fi
 
           # 形状校验放最前面：npm 的 token 列表页只显示掩码
-          # （XXXXX-XXXXX-XXXXX-XXXXX）。复制到掩码比复制错更难发现 ——
+          # （形如 XXXXX-XXXXX-XXXXX-XXXXX）。复制到掩码比复制错更难发现 ——
           # 长度看起来像那么回事，只有认证时才 401。
           echo "token 长度: ${#NODE_AUTH_TOKEN} 字符"
 

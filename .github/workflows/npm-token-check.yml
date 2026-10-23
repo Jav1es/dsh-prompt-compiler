@@ -33,7 +33,33 @@ jobs:
             echo "::error::secrets.NPM_TOKEN 为空 —— 未配置或已被删除"
             exit 1
           fi
+
+          # 形状校验放最前面：npm 的 token 列表页只显示掩码
+          # （XXXXX-XXXXX-XXXXX-XXXXX）。复制到掩码比复制错更难发现 ——
+          # 长度看起来像那么回事，只有认证时才 401。
           echo "token 长度: ${#NODE_AUTH_TOKEN} 字符"
+
+          case "$NODE_AUTH_TOKEN" in
+            *XXXXX*)
+              echo "::error::这是 npm 页面上的掩码占位符，不是真 token"
+              echo ""
+              echo "npm 只在【生成时的弹窗里】完整显示一次 token，关掉就再也看不到。"
+              echo "列表页永远显示掩码，无法从那里复制出原值。"
+              echo ""
+              echo "正确做法："
+              echo "  1. https://www.npmjs.com/settings/jav1es/tokens/granular-access-tokens/new"
+              echo "  2. 权限选 Read and write，包范围选 dsh-prompt-compiler"
+              echo "  3. 点 Generate 后【立刻】复制弹窗里的完整 token（npm_ 开头，40+ 字符）"
+              echo "  4. 粘到 GitHub Secret"
+              exit 1
+              ;;
+          esac
+
+          case "$NODE_AUTH_TOKEN" in
+            npm_*) ;;
+            *) echo "::warning::token 不以 npm_ 开头；若为旧式 token 可忽略" ;;
+          esac
+
           WHO=$(npm whoami 2>&1) || {
             echo "::error::npm whoami 失败 —— token 已过期、被撤销，或权限不足"
             echo "$WHO"

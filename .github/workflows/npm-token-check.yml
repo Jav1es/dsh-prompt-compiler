@@ -1,0 +1,61 @@
+name: 检查 NPM_TOKEN 是否有效
+
+# 为什么需要这个 workflow：
+#   npm 的 granular access token 会过期（2026-10-22 就有一次，名为
+#   dsh-prompt-compiler-0.2）。过期时不会主动报错，要等到下次真正发版
+#   才在 `npm publish` 那一步炸掉 —— 而那时 tag 已经推了、Release 已经建了，
+#   收拾起来很别扭。
+#
+#   这个 workflow 只做一件事：用 secrets.NPM_TOKEN 认证并执行 `npm whoami`，
+#   不发布任何东西、不写任何东西。零副作用。
+#
+#   建议每次换 token 后、以及每个月手动跑一次。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: npm whoami
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+
+      - name: 用 NPM_TOKEN 认证
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::secrets.NPM_TOKEN 为空 —— 未配置或已被删除"
+            exit 1
+          fi
+          echo "token 长度: ${#NODE_AUTH_TOKEN} 字符"
+          WHO=$(npm whoami 2>&1) || {
+            echo "::error::npm whoami 失败 —— token 已过期、被撤销，或权限不足"
+            echo "$WHO"
+            echo ""
+            echo "常见原因："
+            echo "  1. granular token 已过期（npm 默认有效期有限）"
+            echo "  2. token 被手动撤销"
+            echo "  3. token 没有 dsh-prompt-compiler 包的 publish 权限"
+            echo ""
+            echo "重新生成：https://www.npmjs.com/settings/jav1es/tokens/granular-access-tokens/new"
+            exit 1
+          }
+          echo "✅ 认证成功，身份：$WHO"
+
+      - name: 确认对目标包有发布权限
+        run: |
+          # 只读检查：能否看到包，以及当前 latest 版本
+          npm view dsh-prompt-compiler version --registry=https://registry.npmjs.org
+          echo "✅ 包可见"
+          echo ""
+          echo "注意：npm view 走的是公共读权限，不代表有 publish 权限。"
+          echo "publish 权限只有在真正 npm publish 时才会被验证。"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true

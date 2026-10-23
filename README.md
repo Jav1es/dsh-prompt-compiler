@@ -372,6 +372,34 @@ CI 在 Node 22.x / 24.x 上跑 `npm ci → check → test`。
 只覆盖「结构 + 文案 + 条件渲染」，**测不出布局缺陷**。涉及浮层 / `position:sticky` /
 滚动容器的改动，务必实机看一眼再发版。
 
+## 发布
+
+推 `v*` tag 触发 `.github/workflows/release.yml` → `npm publish --provenance`。
+tag 必须与 `package.json` 的 `version` 一致，否则 CI 直接拒绝（同一个版本号只能发一次，
+发错了只能改号重发，所以挡在发布前）。
+
+```bash
+npm version patch        # 或 minor / major，同步改 CHANGELOG
+git push origin main --follow-tags
+```
+
+### NPM_TOKEN 会过期
+
+npm 的 granular access token 有有效期，过期时**只发一封邮件，不会让任何东西变红** ——
+要等到下次真正发版才在 `npm publish` 那一步炸掉，那时 tag 已推、Release 已建。
+
+所以换 token 后、发版前、以及每月，手动跑一次：
+
+```
+Actions → 检查 NPM_TOKEN 是否有效 → Run workflow
+```
+
+它只做 `npm whoami`，不发布不写任何东西。失败会直接告诉你原因。
+
+重新生成：<https://www.npmjs.com/settings/jav1es/tokens/granular-access-tokens/new>
+（权限选 **Read and write**，包范围选 `dsh-prompt-compiler`；或用 Automation token）
+生成后更新仓库 Secrets 里的 `NPM_TOKEN`。
+
 ## 版本
 
 变更记录见 [CHANGELOG.md](./CHANGELOG.md)。
